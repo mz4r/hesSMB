@@ -1,0 +1,11 @@
+lldap_namespace: "lldap"
+lldap_image_tag: "v0.5.0"
+lldap_domain: "auth.mz4.re"
+
+lldap_base_dn: "dc=mz4,dc=re"
+lldap_admin_user: "admin"
+lldap_admin_password: "changeme"
+lldap_jwt_secret: "changemechangemechangemechangemechangemechangemechangemechangemechangemechangemechangemechangemechangemechangemechangemechangeme"
+
+lldap_storage_size: "1Gi"
+lldap_storage_class: "longhorn"

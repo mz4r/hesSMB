@@ -1,0 +1,91 @@
+packer/iso/**
+packer/**.qcow2
+packer/**.iso
+docs/**.mp4
+keys/**
+
+
+
+# ============================================================================
+# Fichiers à exclure du versioning Git
+# ============================================================================
+
+# Fichiers de logs Ansible
+*.log
+*.retry
+
+# Fichiers temporaires
+*.tmp
+*.temp
+/tmp/
+
+# Fichiers de secrets et tokens
+*token*
+*secret*
+*.key
+*.pem
+
+# Kubeconfig
+kubeconfig*
+k3s.yaml
+
+# Backup etcd
+*.db
+snapshots/
+
+# Fichiers système
+.DS_Store
+Thumbs.db
+
+# Environnements virtuels Python
+venv/
+.venv/
+env/
+
+# Cache Ansible
+.ansible/
+.ansible_cache/
+__pycache__/
+*.pyc
+
+# Éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Inventaires avec données sensibles (optionnel)
+# inventories/production/
+
+
+# Dossiers locaux (.terraform)
+.terraform/
+*terraform.lock.hcl
+
+# Fichiers d'état (CRITIQUE : Contient des secrets)
+*.tfstate
+*.tfstate.*
+
+# Fichiers de variables (souvent des secrets)
+*.tfvars
+*.tfvars.json
+
+# Fichiers de plan (binaires générés)
+*.tfplan
+
+# Logs de crash
+crash.log
+crash.*.log
+
+# Fichiers de configuration CLI locaux
+.terraformrc
+terraform.rc
+
+# Fichiers d'override locaux
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+.ansible_cache/

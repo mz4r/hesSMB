@@ -1,0 +1,88 @@
+---
+- name: Installer WireGuard et outils
+  become: yes
+  package:
+    name:
+      - wireguard
+      - iptables
+    state: present
+
+- name: Créer le dossier de clés sur le serveur distant
+  become: yes
+  file:
+    path: "{{ server_keys_dir }}"
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Générer paire de clés SERVEUR (si absente)
+  become: yes
+  shell: "wg genkey | tee {{ server_keys_dir }}/server_private.key | wg pubkey > {{ server_keys_dir }}/server_public.key"
+  args:
+    creates: "{{ server_keys_dir }}/server_private.key"
+
+- name: Lire la clé privée du serveur
+  become: yes
+  slurp:
+    src: "{{ server_keys_dir }}/server_private.key"
+  register: server_priv_file
+
+- name: Lire la clé publique du serveur
+  become: yes
+  slurp:
+    src: "{{ server_keys_dir }}/server_public.key"
+  register: server_pub_file
+
+- name: Générer paire de clés CLIENTS (si absentes)
+  become: yes
+  shell: "wg genkey | tee {{ server_keys_dir }}/{{ item.name }}_private.key | wg pubkey > {{ server_keys_dir }}/{{ item.name }}_public.key"
+  args:
+    creates: "{{ server_keys_dir }}/{{ item.name }}_private.key"
+  loop: "{{ wg_clients }}"
+
+- name: Lire les clés privées des clients
+  become: yes
+  slurp:
+    src: "{{ server_keys_dir }}/{{ item.name }}_private.key"
+  register: client_priv_files
+  loop: "{{ wg_clients }}"
+
+- name: Lire les clés publiques des clients
+  become: yes
+  slurp:
+    src: "{{ server_keys_dir }}/{{ item.name }}_public.key"
+  register: client_pub_files
+  loop: "{{ wg_clients }}"
+
+- name: Générer les fichiers .conf pour les CLIENTS
+  become: yes
+  template:
+    src: templates/wg-client.conf.j2
+    dest: "{{ server_keys_dir }}/{{ item.0.name }}.conf"
+    mode: '0600'
+  vars:
+    client: "{{ item.0 }}"
+    client_private_key: "{{ item.1['content'] | b64decode | trim }}"
+    server_public_key: "{{ server_pub_file['content'] | b64decode | trim }}"
+  loop: "{{ wg_clients | zip(client_priv_files.results) | list }}"
+
+- name: Activer IP Forwarding
+  become: yes
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    sysctl_set: yes
+    state: present
+    reload: yes
+
+- name: Déployer la configuration serveur WireGuard
+  become: yes
+  template:
+    src: templates/wg-server.conf.j2
+    dest: "/etc/wireguard/{{ wg_interface }}.conf"
+    mode: '0600'
+  vars:
+    server_private_key: "{{ server_priv_file['content'] | b64decode | trim }}"
+    peers: "{{ wg_clients | zip(client_pub_files.results) | list }}"
+  notify: Restart WireGuard

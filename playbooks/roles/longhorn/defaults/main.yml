@@ -1,0 +1,5 @@
+---
+longhorn_version: "v1.5.3"
+longhorn_namespace: "longhorn-system"
+longhorn_manifest_url: "https://raw.githubusercontent.com/longhorn/longhorn/{{ longhorn_version }}/deploy/longhorn.yaml"
+longhorn_wait_timeout: 600

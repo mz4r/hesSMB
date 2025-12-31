@@ -1,0 +1,17 @@
+---
+k3s_node_type: "server"
+
+k3s_server_options:
+  - "--disable servicelb"
+  - "--disable traefik"
+  - "--write-kubeconfig-mode 644"
+  - "--tls-san {{ ansible_host }}"
+  - "--tls-san {{ inventory_hostname }}"
+  - "--cluster-cidr {{ k3s_cluster_cidr }}"
+  - "--service-cidr {{ k3s_service_cidr }}"
+
+k3s_primary_server_options:
+  - "--cluster-init"
+
+k3s_secondary_server_options:
+  - "--server https://{{ k3s_primary_master_ip }}:6443"

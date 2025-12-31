@@ -1,0 +1,66 @@
+
+# ============================================================================
+# 5. DÉMO : MODÈLE SKLEARN-IRIS (CORRIGÉ)
+# ============================================================================
+
+# Étape A : On écrit le YAML sur le disque (contournement CRD Terraform)
+resource "local_file" "sklearn_iris_yaml" {
+  content  = <<EOF
+apiVersion: "serving.kserve.io/v1beta1"
+kind: "InferenceService"
+metadata:
+  name: "sklearn-iris"
+  namespace: "kserve"
+  annotations:
+    "sidecar.istio.io/inject": "false"
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: sklearn
+      storageUri: "gs://kfserving-examples/models/sklearn/1.0/model"
+EOF
+  filename = "${path.module}/sklearn-iris.yaml"
+}
+
+# Étape B : On applique via kubectl pour éviter l'erreur de validation Terraform
+resource "null_resource" "apply_sklearn_iris" {
+  triggers = {
+    manifest_sha1 = sha1(local_file.sklearn_iris_yaml.content)
+  }
+
+  provisioner "local-exec" {
+    command = "kubectl apply -f ${local_file.sklearn_iris_yaml.filename} --kubeconfig ../../kubeconfig_cluster"
+  }
+
+  depends_on = [argocd_application.kserve_controller]
+}
+
+# Étape C : La Route Traefik (Dépend maintenant de la commande kubectl)
+resource "kubernetes_manifest" "sklearn_iris_route" {
+  manifest = {
+    apiVersion = "traefik.io/v1alpha1"
+    kind       = "IngressRoute"
+    metadata = {
+      name      = "sklearn-iris-route"
+      namespace = kubernetes_namespace.kserve.metadata[0].name
+    }
+    spec = {
+      entryPoints = ["websecure"]
+      routes = [{
+        match = "Host(`iris.kserve.mz4.re`)"
+        kind  = "Rule"
+        services = [{
+          name = "sklearn-iris-predictor-default"
+          port = 80
+        }]
+      }]
+      tls = {
+        secretName = "kserve-wildcard-tls"
+      }
+    }
+  }
+
+  # ATTENTION : On dépend ici de la ressource null_resource, pas du manifest
+  depends_on = [null_resource.apply_sklearn_iris]
+}

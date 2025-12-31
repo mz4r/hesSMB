@@ -1,0 +1,115 @@
+- name: Déployer les VMs locales avec IP statique
+  hosts: localhost
+  become: yes
+  gather_facts: no
+  collections:
+    - community.libvirt
+  tasks:
+    - name: Construire la liste des VMs depuis l'inventory
+      set_fact:
+        vms: |
+          {% set list = [] %}
+          {% for host in groups['vms'] %}
+          {%   set ip = hostvars[host].ansible_host | default(hostvars[host]['ansible_host']) %}
+          {%   if not ip %}
+          {%       print "ERREUR: Pas d'IP trouvée pour " ~ host %}
+          {%   endif %}
+          {%   set _ = list.append({
+                'name': host,
+                'memory': hostvars[host]['memory'],
+                'vcpus': hostvars[host]['vcpus'],
+                'mac': hostvars[host]['mac'],
+                'ip': ip
+              }) %}
+          {% endfor %}
+          {{ list }}
+
+    - name: Vérifier que toutes les VMs ont une IP
+      fail:
+        msg: "L'adresse IP est manquante pour la VM {{ item.name }}. Vérifiez votre inventory."
+      when: item.ip is not defined or item.ip == ""
+      loop: "{{ vms }}"
+
+    - name: 1. Définir le réseau libvirt (XML uniquement)
+      community.libvirt.virt_net:
+        name: smb-net
+        command: define
+        xml: |
+          <network>
+            <name>smb-net</name>
+            <bridge name="virbr1"/>
+            <forward mode="nat"/>
+            <dns>
+              <forwarder addr='1.1.1.1'/>
+            </dns>
+            <ip address="192.168.100.1" netmask="255.255.255.0">
+              <dhcp>
+              {% for vm in vms %}
+                <host mac='{{ vm.mac }}' ip='{{ vm.ip }}' name='{{ vm.name }}'/>
+              {% endfor %}
+              </dhcp>
+            </ip>
+          </network>
+
+    - name: 2. Activer et démarrer le réseau
+      community.libvirt.virt_net:
+        name: smb-net
+        state: active
+        autostart: yes
+
+    - name: Créer le répertoire pour chaque VM
+      file:
+        path: "{{ vm_images_dir }}/{{ item.name }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ vms }}"
+
+    - name: Copier et renommer l'image de base pour chaque VM
+      command: >
+        qemu-img create -f qcow2 -b {{ vm_images_dir }}/{{ base_image }} -F qcow2 {{ vm_images_dir }}/{{ item.name }}/{{ item.name }}.qcow2
+      loop: "{{ vms }}"
+      args:
+        creates: "{{ vm_images_dir }}/{{ item.name }}/{{ item.name }}.qcow2"
+    
+
+    - name: Définir les VMs
+      community.libvirt.virt:
+        name: "{{ item.name }}"
+        command: define
+        xml: |
+          <domain type='kvm'>
+            <name>{{ item.name }}</name>
+            <memory unit='KiB'>{{ item.memory * 1024 }}</memory>
+            <vcpu placement='static'>{{ item.vcpus }}</vcpu>
+            <os>
+              <type arch='x86_64'>hvm</type>
+              <boot dev='hd'/>
+            </os>
+            <devices>
+              <disk type='file' device='disk'>
+                <driver name='qemu' type='qcow2'/>
+                <source file='{{ vm_images_dir }}/{{ item.name }}/{{ item.name }}.qcow2'/>
+                <target dev='vda' bus='virtio'/>
+              </disk>
+              <interface type='network'>
+                <source network='smb-net'/>
+                <mac address='{{ item.mac }}'/>
+                <model type='e1000'/>
+              </interface>
+              <graphics type='vnc' port='-1' listen='0.0.0.0'/>
+              <serial type='pty'>
+                <target port='0'/>
+              </serial>
+              <console type='pty'>
+                <target type='serial' port='0'/>
+              </console>
+            </devices>
+          </domain>
+        autostart: true
+      loop: "{{ vms }}"
+
+    - name: Démarrer les VMs
+      community.libvirt.virt:
+        name: "{{ item.name }}"
+        state: running
+      loop: "{{ vms }}"

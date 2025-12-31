@@ -1,0 +1,4 @@
+---
+traefik_version: "v2.10.7"
+traefik_namespace: "traefik"
+traefik_wait_timeout: 300

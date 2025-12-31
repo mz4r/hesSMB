@@ -1,0 +1,88 @@
+---
+- name: Reset complet de UFW
+  community.general.ufw:
+    state: reset
+- name: Appliquer les règles UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port | default(omit) }}"
+    proto: "{{ item.proto | default('any') }}"
+    src: "{{ item.src | default('any') }}"
+    comment: "{{ item.comment }}"
+  loop:
+    - { port: '6443', proto: 'tcp', comment: 'K3s API Server' }
+    - { src: '10.42.0.0/16', comment: 'K3s Pods CIDR' }
+    - { src: '10.43.0.0/16', comment: 'K3s Services CIDR' }
+    - { src: '192.168.100.0/24', comment: 'Management Network' }
+    - { port: '6443', proto: 'tcp', comment: 'K3s API Server' }
+    - { src: '10.20.0.0/24', comment: 'WireGuard Clients Traffic' } 
+    - { src: '10.0.2.0/24', comment: 'MetalLB Pool Traffic' }
+
+- name: Définir le hostname du système
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Ajouter le hostname dans /etc/hosts (Pour éviter l'erreur 'unable to resolve host')
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: '^127\.0\.0\.1'
+    line: "127.0.0.1 {{ inventory_hostname }} localhost"
+    state: present
+
+- name: Mettre à jour le cache APT
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+  retries: 3
+  delay: 5
+
+- name: Installer les paquets système requis
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+  retries: 3
+  delay: 5
+
+
+- name: Charger le module kernel br_netfilter
+  community.general.modprobe:
+    name: br_netfilter
+    state: present
+    persistent: present
+
+- name: Charger le module kernel overlay
+  community.general.modprobe:
+    name: overlay
+    state: present
+    persistent: present
+
+- name: Configurer les paramètres sysctl pour Kubernetes
+  ansible.posix.sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+    sysctl_file: /etc/sysctl.d/99-kubernetes.conf
+  loop: "{{ sysctl_config | dict2items }}"
+
+- name: S'assurer que le service systemd-timesyncd est activé et démarré
+  ansible.builtin.systemd:
+    name: systemd-timesyncd
+    state: started
+    enabled: true
+
+- name: S'assurer que le service open-iscsi est activé et démarré (pour Longhorn)
+  ansible.builtin.systemd:
+    name: open-iscsi
+    state: started
+    enabled: true
+  when: "'open-iscsi' in common_packages"
+
+- name: Vérifier la connectivité réseau vers les autres nœuds
+  ansible.builtin.wait_for:
+    host: "{{ hostvars[item].ansible_host }}"
+    port: 22
+    timeout: 10
+  loop: "{{ groups['k3s_cluster'] }}"
+  when: item != inventory_hostname
+

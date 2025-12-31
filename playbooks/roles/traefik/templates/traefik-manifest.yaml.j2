@@ -1,0 +1,142 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: traefik
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: traefik.io/ingress-controller
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: traefik
+  namespace: {{ traefik_namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: traefik
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "secrets", "configmaps", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
+
+  - apiGroups: ["traefik.containo.us", "traefik.io"]
+    resources: 
+      - "middlewares"
+      - "middlewaretcps"
+      - "ingressroutes"
+      - "traefikservices"
+      - "ingressroutetcps"
+      - "ingressrouteudps"
+      - "tlsoptions"
+      - "tlsstores"
+      - "serverstransports"
+      - "serverstransporttcps"
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: traefik
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: traefik
+subjects:
+  - kind: ServiceAccount
+    name: traefik
+    namespace: {{ traefik_namespace }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  namespace: {{ traefik_namespace }}
+  labels:
+    app: traefik
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      labels:
+        app: traefik
+    spec:
+      serviceAccountName: traefik
+      containers:
+        - name: traefik
+          image: traefik:{{ traefik_version }}
+          args:
+            - --api.insecure=true
+            - --api.dashboard=true
+            - --providers.kubernetesingress=true
+            - --providers.kubernetesingress.ingressclass=traefik
+            - --providers.kubernetescrd=true
+            - --providers.kubernetesingress.allowexternalnameservices=true
+            - --entrypoints.web.address=:80
+            - --entrypoints.websecure.address=:443
+            - --log.level=INFO
+          ports:
+            - name: web
+              containerPort: 80
+            - name: websecure
+              containerPort: 443
+            - name: admin
+              containerPort: 8080
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik
+  namespace: {{ traefik_namespace }}
+  labels:
+    app: traefik
+spec:
+  type: LoadBalancer
+  ports:
+    - name: web
+      port: 80
+      targetPort: 80
+      protocol: TCP
+    - name: websecure
+      port: 443
+      targetPort: 443
+      protocol: TCP
+  selector:
+    app: traefik
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: traefik-dashboard
+  namespace: {{ traefik_namespace }}
+  labels:
+    app: traefik
+spec:
+  type: ClusterIP
+  ports:
+    - name: admin
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    app: traefik

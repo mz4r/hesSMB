@@ -1,0 +1,80 @@
+---
+- name: Vérifier que kubectl est disponible
+  ansible.builtin.command: k3s kubectl version --client
+  changed_when: false
+  register: kubectl_check
+
+- name: Créer le namespace MetalLB
+  ansible.builtin.command: k3s kubectl create namespace {{ metallb_namespace }}
+  register: metallb_ns_create
+  changed_when: "'created' in metallb_ns_create.stdout"
+  failed_when:
+    - metallb_ns_create.rc != 0
+    - "'AlreadyExists' not in metallb_ns_create.stderr"
+
+- name: Télécharger le manifest MetalLB
+  ansible.builtin.get_url:
+    url: "{{ metallb_manifest_url }}"
+    dest: "/tmp/metallb-native.yaml"
+    mode: '0644'
+
+- name: Appliquer le manifest MetalLB
+  ansible.builtin.command: k3s kubectl apply -f /tmp/metallb-native.yaml
+  register: metallb_apply
+  changed_when: "'created' in metallb_apply.stdout or 'configured' in metallb_apply.stdout"
+
+- name: Attendre que les pods MetalLB soient prêts
+  ansible.builtin.command: |
+    k3s kubectl wait --namespace {{ metallb_namespace }} \
+      --for=condition=ready pod \
+      --selector=app=metallb \
+      --timeout={{ metallb_wait_timeout }}s
+  register: metallb_wait
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: metallb_wait.rc == 0
+
+- name: Créer le fichier de configuration IPAddressPool
+  ansible.builtin.template:
+    src: ipaddresspool.yaml.j2
+    dest: /tmp/metallb-ipaddresspool.yaml
+    mode: '0644'
+
+- name: Appliquer la configuration IPAddressPool
+  ansible.builtin.command: k3s kubectl apply -f /tmp/metallb-ipaddresspool.yaml
+  register: ipaddresspool_apply
+  changed_when: "'created' in ipaddresspool_apply.stdout or 'configured' in ipaddresspool_apply.stdout"
+
+- name: Créer le fichier de configuration L2Advertisement
+  ansible.builtin.template:
+    src: l2advertisement.yaml.j2
+    dest: /tmp/metallb-l2advertisement.yaml
+    mode: '0644'
+
+- name: Appliquer la configuration L2Advertisement
+  ansible.builtin.command: k3s kubectl apply -f /tmp/metallb-l2advertisement.yaml
+  register: l2advertisement_apply
+  changed_when: "'created' in l2advertisement_apply.stdout or 'configured' in l2advertisement_apply.stdout"
+
+- name: Vérifier le statut de MetalLB
+  ansible.builtin.command: k3s kubectl get pods -n {{ metallb_namespace }}
+  register: metallb_status
+  changed_when: false
+
+- name: Afficher le statut de MetalLB
+  ansible.builtin.debug:
+    var: metallb_status.stdout_lines
+
+- name: Vérifier la configuration IPAddressPool
+  ansible.builtin.command: k3s kubectl get ipaddresspool -n {{ metallb_namespace }}
+  register: ipaddresspool_status
+  changed_when: false
+
+- name: Afficher la configuration IPAddressPool
+  ansible.builtin.debug:
+    var: ipaddresspool_status.stdout_lines
+
+- name: Message de confirmation
+  ansible.builtin.debug:
+    msg: "MetalLB déployé avec succès avec le pool d'IP {{ metallb_ip_range }}"

@@ -1,0 +1,134 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: lldap-secrets
+  namespace: {{ lldap_namespace }}
+type: Opaque
+stringData:
+  LLDAP_JWT_SECRET: "{{ lldap_jwt_secret }}"
+  LLDAP_LDAP_USER_PASS: "{{ lldap_admin_password }}"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lldap-data
+  namespace: {{ lldap_namespace }}
+spec:
+  storageClassName: {{ lldap_storage_class }}
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ lldap_storage_size }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: lldap
+  namespace: {{ lldap_namespace }}
+spec:
+  ports:
+    - name: http
+      port: 17170
+      targetPort: 17170
+    - name: ldap
+      port: 3890
+      targetPort: 3890
+  selector:
+    app: lldap
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lldap
+  namespace: {{ lldap_namespace }}
+  labels:
+    app: lldap
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: lldap
+  template:
+    metadata:
+      labels:
+        app: lldap
+    spec:
+      containers:
+        - name: lldap
+          image: lldap/lldap:{{ lldap_image_tag }}
+          ports:
+            - containerPort: 17170
+            - containerPort: 3890
+          env:
+            - name: LLDAP_LDAP_PORT
+              value: "3890"
+            - name: LLDAP_HTTP_PORT
+              value: "17170"
+            - name: LLDAP_LDAP_BASE_DN
+              value: "{{ lldap_base_dn }}"
+            - name: LLDAP_LDAP_USER_DN
+              value: "{{ lldap_admin_user }}"
+            - name: LLDAP_HTTP_URL
+              value: "https://{{ lldap_domain }}"
+            - name: LLDAP_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: lldap-secrets
+                  key: LLDAP_JWT_SECRET
+            - name: LLDAP_LDAP_USER_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: lldap-secrets
+                  key: LLDAP_LDAP_USER_PASS
+          volumeMounts:
+            - mountPath: "/data"
+              name: "data"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 17170
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: lldap-data
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: lldap-tls
+  namespace: {{ lldap_namespace }}
+spec:
+  secretName: lldap-tls
+  issuerRef:
+    name: "local-pki-issuer" 
+    kind: ClusterIssuer
+  commonName: {{ lldap_domain }}
+  dnsNames:
+    - {{ lldap_domain }}
+
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: lldap-route
+  namespace: {{ lldap_namespace }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ lldap_domain }}`)
+      kind: Rule
+      services:
+        - name: lldap
+          port: 17170
+  tls:
+    secretName: lldap-tls

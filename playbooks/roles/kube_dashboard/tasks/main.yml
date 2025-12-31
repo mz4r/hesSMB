@@ -1,0 +1,81 @@
+---
+- name: Vérifier que kubectl est disponible
+  ansible.builtin.command: k3s kubectl version --client
+  changed_when: false
+  register: kubectl_check
+
+- name: Télécharger le manifest Kubernetes Dashboard
+  ansible.builtin.get_url:
+    url: "{{ k8s_dashboard_manifest_url }}"
+    dest: "/tmp/kubernetes-dashboard.yaml"
+    mode: '0644'
+
+- name: Appliquer le manifest Kubernetes Dashboard
+  ansible.builtin.command: k3s kubectl apply -f /tmp/kubernetes-dashboard.yaml
+  register: dashboard_apply
+  changed_when: "'created' in dashboard_apply.stdout or 'configured' in dashboard_apply.stdout"
+
+- name: Attendre que les pods du Dashboard soient prêts
+  ansible.builtin.command: |
+    k3s kubectl wait --namespace {{ k8s_dashboard_namespace }} \
+      --for=condition=ready pod \
+      --selector=k8s-app=kubernetes-dashboard \
+      --timeout={{ k8s_dashboard_wait_timeout }}s
+  register: dashboard_wait
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: dashboard_wait.rc == 0
+
+- name: Créer le fichier ServiceAccount admin
+  ansible.builtin.template:
+    src: admin-user-sa.yaml.j2
+    dest: /tmp/dashboard-admin-sa.yaml
+    mode: '0644'
+
+- name: Appliquer le ServiceAccount admin
+  ansible.builtin.command: k3s kubectl apply -f /tmp/dashboard-admin-sa.yaml
+  register: admin_sa_apply
+  changed_when: "'created' in admin_sa_apply.stdout or 'configured' in admin_sa_apply.stdout"
+
+- name: Créer le fichier ClusterRoleBinding admin
+  ansible.builtin.template:
+    src: admin-user-crb.yaml.j2
+    dest: /tmp/dashboard-admin-crb.yaml
+    mode: '0644'
+
+- name: Appliquer le ClusterRoleBinding admin
+  ansible.builtin.command: k3s kubectl apply -f /tmp/dashboard-admin-crb.yaml
+  register: admin_crb_apply
+  changed_when: "'created' in admin_crb_apply.stdout or 'configured' in admin_crb_apply.stdout"
+
+- name: Vérifier le statut du Dashboard
+  ansible.builtin.command: k3s kubectl get pods -n {{ k8s_dashboard_namespace }}
+  register: dashboard_status
+  changed_when: false
+
+- name: Afficher le statut du Dashboard
+  ansible.builtin.debug:
+    var: dashboard_status.stdout_lines
+
+- name: Vérifier les services du Dashboard
+  ansible.builtin.command: k3s kubectl get svc -n {{ k8s_dashboard_namespace }}
+  register: dashboard_svc_status
+  changed_when: false
+
+- name: Afficher les services du Dashboard
+  ansible.builtin.debug:
+    var: dashboard_svc_status.stdout_lines
+
+- name: Créer un token pour le ServiceAccount admin (méthode moderne)
+  ansible.builtin.shell: |
+    k3s kubectl -n {{ k8s_dashboard_namespace }} create token {{ k8s_dashboard_admin_user }} --duration=87600h
+  register: admin_token
+  changed_when: false
+
+- name: Afficher le token d'accès admin
+  ansible.builtin.debug:
+    msg:
+      - "Token Dashboard : {{ admin_token.stdout }}"
+
+

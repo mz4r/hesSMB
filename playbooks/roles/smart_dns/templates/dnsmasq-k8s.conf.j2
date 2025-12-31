@@ -1,0 +1,16 @@
+# ==========================================================
+# CONFIGURATION DNS DYNAMIQUE (Généré par Ansible)
+# ==========================================================
+# Domaine racine
+domain={{ domain_name | default('mz4.re') }}
+
+{% if traefik_lb is defined and traefik_lb %}
+address=/.{{ domain_name | default('mz4.re') }}/{{ traefik_lb.ip }}
+{% endif %}
+
+{% for svc in lb_services %}
+{% if traefik_lb is not defined or svc.ip != traefik_lb.ip %}
+# Service: {{ svc.name }} (Namespace: {{ svc.namespace }})
+address=/{{ svc.name }}.{{ domain_name | default('mz4.re') }}/{{ svc.ip }}
+{% endif %}
+{% endfor %}

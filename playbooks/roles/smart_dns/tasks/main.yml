@@ -1,0 +1,37 @@
+---
+- name: Installer Dnsmasq et outils JSON
+  ansible.builtin.package:
+    name: 
+      - dnsmasq
+      - jq
+    state: present
+
+- name: Récupérer tous les services Kubernetes (JSON)
+  ansible.builtin.command: k3s kubectl get services --all-namespaces -o json
+  register: k8s_services_raw
+  changed_when: false
+
+- name: Extraire les IPs LoadBalancer MetalLB
+  ansible.builtin.set_fact:
+    lb_services: "{{ k8s_services_raw.stdout | from_json | json_query(query) }}"
+  vars:
+    query: "items[?spec.type=='LoadBalancer' && status.loadBalancer.ingress[0].ip].{name: metadata.name, namespace: metadata.namespace, ip: status.loadBalancer.ingress[0].ip}"
+
+- name: Identifier l'IP de Traefik (Ingress Controller)
+  ansible.builtin.set_fact:
+    traefik_lb: "{{ lb_services | selectattr('name', 'search', 'traefik') | first | default(None) }}"
+
+- name: Configurer Dnsmasq (Dynamique)
+  ansible.builtin.template:
+    src: dnsmasq-k8s.conf.j2
+    dest: /etc/dnsmasq.d/99-k8s-dynamic.conf
+    mode: '0644'
+  notify: Restart Dnsmasq
+
+- name: Configurer Dnsmasq principal (Interfaces)
+  ansible.builtin.lineinfile:
+    path: /etc/dnsmasq.conf
+    regexp: '^interface='
+    line: 'interface=wg0,lo'
+    state: present
+  notify: Restart Dnsmasq

@@ -1,0 +1,6 @@
+---
+k3s_node_type: "agent"
+k3s_agent_options:
+  - "--server https://{{ k3s_primary_master_ip }}:6443"
+k3s_node_labels:
+  - "node-role.kubernetes.io/worker=true"

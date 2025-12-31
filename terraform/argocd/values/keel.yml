@@ -1,0 +1,41 @@
+image:
+  repository: keelhq/keel
+  tag: null
+  pullPolicy: Always
+
+helmProvider:
+  enabled: true
+  version: "v3"
+  tillerNamespace: "kube-system"
+
+service:
+  enabled: true
+  type: ClusterIP
+  externalPort: 9300
+
+basicauth:
+  enabled: true
+  user: "admin"
+  password: "changeme"
+
+ingress:
+  enabled: false
+polling:
+  enabled: true
+  defaultSchedule: "@every 1m"
+
+notificationLevel: info
+debug: false
+
+rbac:
+  enabled: true
+  serviceAccount:
+    create: true
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi

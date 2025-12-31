@@ -1,0 +1,12 @@
+teleport_namespace: "teleport"
+teleport_chart_version: "16.4.10" 
+teleport_cluster_name: "mz4-cluster"
+teleport_domain: "teleport.mz4.re"
+
+teleport_storage_size: "10Gi"
+teleport_storage_class: "longhorn"
+
+teleport_email: "admin@mz4.re"
+teleport_admin_user: "admin"
+teleport_admin_roles: "editor,access"
+teleport_admin_logins: "root,ubuntu"

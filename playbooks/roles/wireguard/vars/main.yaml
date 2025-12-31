@@ -1,0 +1,6 @@
+---
+wg_interface: wg0
+wg_server_port: 51820
+wg_server_internal_mask: 24
+server_keys_dir: "/root/wireguard-keys"
+wg_client_dns: 10.20.0.1

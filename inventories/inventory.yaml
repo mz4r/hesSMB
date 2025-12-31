@@ -1,0 +1,51 @@
+all:
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    vm_images_dir: "/var/lib/libvirt/images"
+    base_image: "base-images/debian13-hardening-cis.qcow2"
+  children:
+    vms:
+      hosts:
+        node1:
+          ansible_host: 192.168.100.200
+          memory: 4096
+          vcpus: 3
+          mac: "52:54:00:00:02:00"
+
+          wg_server_public_ip: 192.168.100.200
+          wg_server_internal_ip: 10.20.0.1
+          wg_server_port: 51821
+          
+          wg_clients:
+            - name: admin
+              ip: 10.20.0.2/32
+
+        node2:
+          ansible_host: 192.168.100.201
+          memory: 4096
+          vcpus: 3
+          mac: "52:54:00:00:03:00"
+
+        node3:
+          ansible_host: 192.168.100.202
+          memory: 4096
+          vcpus: 3
+          mac: "52:54:00:00:04:00"
+
+    k3s_control_plane:
+      hosts:
+        node1:
+        node2:
+        node3:
+
+    k3s_workers:
+      hosts:
+
+    k3s_cluster:
+      children:
+        k3s_control_plane:
+        k3s_workers:
+
+    wireguard:
+      hosts:
+        node1:

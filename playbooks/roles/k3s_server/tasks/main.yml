@@ -1,0 +1,151 @@
+---
+- name: Créer le répertoire de configuration K3s
+  ansible.builtin.file:
+    path: "{{ k3s_config_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Vérifier si K3s est déjà installé
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_binary
+
+- name: Vérifier la version de K3s installée
+  ansible.builtin.command: k3s --version
+  register: k3s_installed_version
+  changed_when: false
+  failed_when: false
+  when: k3s_binary.stat.exists
+
+- name: Déterminer si le nœud est le premier control-plane
+  ansible.builtin.set_fact:
+    is_primary_master: "{{ inventory_hostname == k3s_primary_master }}"
+
+- name: Construire les options K3s pour le premier control-plane
+  ansible.builtin.set_fact:
+    k3s_exec_options: "{{ (k3s_server_options + k3s_primary_server_options) | join(' ') }}"
+  when: is_primary_master
+
+- name: Construire les options K3s pour les control-plane secondaires
+  ansible.builtin.set_fact:
+    k3s_exec_options: "{{ (k3s_server_options + k3s_secondary_server_options) | join(' ') }}"
+  when: not is_primary_master
+
+- name: Créer le fichier de configuration pour le token K3s
+  ansible.builtin.copy:
+    content: "{{ k3s_token }}"
+    dest: "{{ k3s_config_dir }}/token"
+    mode: '0600'
+  no_log: true
+
+- name: Identifier le nœud Primary Master (Premier de la liste)
+  ansible.builtin.set_fact:
+    is_primary_master: "{{ inventory_hostname == groups['k3s_control_plane'][0] }}"
+
+- name: (Debug) Afficher le résultat pour vérification
+  ansible.builtin.debug:
+    msg: "Nœud : {{ inventory_hostname }} | Est Primary Master ? -> {{ is_primary_master }}"
+    
+- name: Installer K3s sur le premier control-plane (cluster-init)
+  ansible.builtin.shell: |
+    curl -sfL {{ k3s_install_script_url }} | \
+    INSTALL_K3S_VERSION="{{ k3s_version }}" \
+    INSTALL_K3S_EXEC="server {{ k3s_exec_options }}" \
+    K3S_TOKEN="{{ k3s_token }}" \
+    sh -
+  args:
+    creates: /etc/systemd/system/k3s.service
+  when:
+    - is_primary_master
+    - not k3s_binary.stat.exists or k3s_version not in k3s_installed_version.stdout
+  register: k3s_primary_install
+
+- name: Attendre que K3s soit prêt sur le premier control-plane
+  ansible.builtin.wait_for:
+    path: "{{ k3s_kubeconfig }}"
+    timeout: "{{ k3s_wait_timeout }}"
+  when: is_primary_master
+
+- name: Vérifier que le cluster est opérationnel sur le premier control-plane
+  ansible.builtin.command: k3s kubectl get nodes
+  register: k3s_nodes_check
+  changed_when: false
+  retries: 10
+  delay: 10
+  until: k3s_nodes_check.rc == 0
+  when: is_primary_master
+
+- name: Attendre que le premier control-plane soit complètement démarré
+  ansible.builtin.wait_for:
+    host: "{{ k3s_primary_master_ip }}"
+    port: 6443
+    timeout: "{{ k3s_wait_timeout }}"
+  when: not is_primary_master
+
+- name: Installer K3s sur les control-plane secondaires
+  ansible.builtin.shell: |
+    curl -sfL {{ k3s_install_script_url }} | \
+    INSTALL_K3S_VERSION="{{ k3s_version }}" \
+    INSTALL_K3S_EXEC="server {{ k3s_exec_options }}" \
+    K3S_TOKEN="{{ k3s_token }}" \
+    sh -
+  args:
+    creates: /etc/systemd/system/k3s.service
+  when:
+    - not is_primary_master
+    - not k3s_binary.stat.exists or k3s_version not in k3s_installed_version.stdout
+  register: k3s_secondary_install
+
+- name: Attendre que K3s soit prêt sur les control-plane secondaires
+  ansible.builtin.wait_for:
+    path: "{{ k3s_kubeconfig }}"
+    timeout: "{{ k3s_wait_timeout }}"
+  when: not is_primary_master
+
+- name: S'assurer que le service K3s est démarré et activé
+  ansible.builtin.systemd:
+    name: k3s
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Créer le répertoire .kube pour l'utilisateur root
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: '0700'
+
+- name: Copier le kubeconfig dans le répertoire .kube de root
+  ansible.builtin.copy:
+    src: "{{ k3s_kubeconfig }}"
+    dest: /root/.kube/config
+    remote_src: true
+    mode: '0600'
+
+- name: Créer le répertoire .kube pour l'utilisateur ansible
+  ansible.builtin.file:
+    path: "/home/{{ ansible_user }}/.kube"
+    state: directory
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0700'
+  when: ansible_user != 'root'
+
+- name: Copier le kubeconfig pour l'utilisateur ansible
+  ansible.builtin.copy:
+    src: "{{ k3s_kubeconfig }}"
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    group: "{{ ansible_user }}"
+    mode: '0600'
+  when: ansible_user != 'root'
+
+- name: Vérifier l'état du cluster depuis ce control-plane
+  ansible.builtin.command: k3s kubectl get nodes -o wide
+  register: cluster_status
+  changed_when: false
+
+- name: Afficher l'état du cluster
+  ansible.builtin.debug:
+    var: cluster_status.stdout_lines

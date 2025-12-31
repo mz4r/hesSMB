@@ -1,0 +1,70 @@
+---
+- name: Vérifier que kubectl est disponible
+  ansible.builtin.command: k3s kubectl version --client
+  changed_when: false
+  register: kubectl_check
+
+- name: Créer le namespace Traefik
+  ansible.builtin.command: k3s kubectl create namespace {{ traefik_namespace }}
+  register: traefik_ns_create
+  changed_when: "'created' in traefik_ns_create.stdout"
+  failed_when:
+    - traefik_ns_create.rc != 0
+    - "'AlreadyExists' not in traefik_ns_create.stderr"
+
+- name: Télécharger les CRDs Traefik
+  ansible.builtin.get_url:
+    url: "https://raw.githubusercontent.com/traefik/traefik/{{ traefik_version }}/docs/content/reference/dynamic-configuration/kubernetes-crd-definition-v1.yml"
+    dest: "/tmp/traefik-crd.yaml"
+    mode: '0644'
+
+- name: Appliquer les CRDs Traefik
+  ansible.builtin.command: k3s kubectl apply -f /tmp/traefik-crd.yaml
+  register: traefik_crd
+  changed_when: "'created' in traefik_crd.stdout or 'configured' in traefik_crd.stdout"
+
+- name: Générer le manifest Traefik depuis le template
+  ansible.builtin.template:
+    src: traefik-manifest.yaml.j2
+    dest: /tmp/traefik-deployment.yaml
+    mode: '0644'
+
+- name: Appliquer le manifest Traefik
+  ansible.builtin.command: k3s kubectl apply -f /tmp/traefik-deployment.yaml
+  register: traefik_deploy
+  changed_when: "'created' in traefik_deploy.stdout or 'configured' in traefik_deploy.stdout"
+
+- name: Attendre que les pods Traefik soient prêts
+  ansible.builtin.command: |
+    k3s kubectl wait --namespace {{ traefik_namespace }} \
+      --for=condition=ready pod \
+      --selector=app=traefik \
+      --timeout={{ traefik_wait_timeout }}s
+  register: traefik_wait
+  changed_when: false
+  retries: 3
+  delay: 10
+  until: traefik_wait.rc == 0
+
+- name: Attendre que MetalLB attribue une IP à Traefik
+  ansible.builtin.pause:
+    seconds: 10
+
+- name: Récupérer l'IP externe de Traefik
+  ansible.builtin.command: |
+    k3s kubectl get svc -n {{ traefik_namespace }} traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+  register: traefik_ip
+  changed_when: false
+  retries: 10
+  delay: 5
+  until: traefik_ip.stdout != ""
+  failed_when: false
+
+- name: Vérifier le statut de Traefik
+  ansible.builtin.command: k3s kubectl get pods -n {{ traefik_namespace }}
+  register: traefik_status
+  changed_when: false
+
+- name: Afficher le statut de Traefik
+  ansible.builtin.debug:
+    var: traefik_status.stdout_lines

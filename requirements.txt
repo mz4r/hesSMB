@@ -1,0 +1,4 @@
+libvirt-python==11.8.0
+lxml==6.0.2
+jmespath==1.0.1
+KubeDiagrams==0.6.0

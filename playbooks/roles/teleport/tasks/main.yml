@@ -1,0 +1,110 @@
+---
+- name: Vérifier si Helm est installé
+  ansible.builtin.command: helm version
+  register: helm_check
+  ignore_errors: true
+  changed_when: false
+
+- name: Installer Helm (si absent)
+  ansible.builtin.shell: |
+    curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+    chmod 700 get_helm.sh
+    ./get_helm.sh
+  when: helm_check.rc != 0
+
+- name: Ajouter le dépôt Helm Teleport
+  ansible.builtin.command: helm repo add teleport https://charts.releases.teleport.dev
+  changed_when: false
+
+- name: Mettre à jour les dépôts Helm
+  ansible.builtin.command: helm repo update
+  changed_when: false
+
+- name: Créer le namespace Teleport
+  ansible.builtin.command: k3s kubectl create namespace {{ teleport_namespace }}
+  register: tel_ns
+  changed_when: "'created' in tel_ns.stdout"
+  failed_when:
+    - tel_ns.rc != 0
+    - "'AlreadyExists' not in tel_ns.stderr"
+
+- name: Supprimer l'ancien Ingress généré par Helm (si existant)
+  ansible.builtin.command: k3s kubectl delete ingress -n {{ teleport_namespace }} mz4-cluster
+  register: del_ing_helm
+  failed_when: false
+  changed_when: "'deleted' in del_ing_helm.stdout"
+
+- name: Supprimer l'ancien Ingress manuel (si existant)
+  ansible.builtin.command: k3s kubectl delete ingress -n {{ teleport_namespace }} teleport-manual-ingress
+  register: del_ing_man
+  failed_when: false
+  changed_when: "'deleted' in del_ing_man.stdout"
+
+- name: Générer le fichier values.yaml (Configuration interne)
+  ansible.builtin.template:
+    src: teleport-values.yaml.j2
+    dest: /tmp/teleport-values.yaml
+    mode: '0644'
+
+- name: Installer/Mettre à jour Teleport via Helm
+  ansible.builtin.command: >
+    helm upgrade --install {{ teleport_cluster_name }} teleport/teleport-cluster
+    --namespace {{ teleport_namespace }}
+    --version {{ teleport_chart_version }}
+    --values /tmp/teleport-values.yaml
+    --wait
+  register: helm_install
+  changed_when: "'Release' in helm_install.stdout"
+
+- name: Générer le manifest Traefik (IngressRoute + ServersTransport)
+  ansible.builtin.template:
+    src: teleport-traefik.yaml.j2
+    dest: /tmp/teleport-traefik.yaml
+    mode: '0644'
+
+- name: Appliquer la configuration Traefik
+  ansible.builtin.command: k3s kubectl apply -f /tmp/teleport-traefik.yaml
+  register: traefik_apply
+  changed_when: "'created' in traefik_apply.stdout or 'configured' in traefik_apply.stdout"
+
+- name: Instructions de création d'utilisateur
+  ansible.builtin.debug:
+    msg:
+      - "✅ Teleport déployé avec succès sur https://{{ teleport_domain }}"
+
+- name: Récupérer le nom du pod Auth Teleport
+  ansible.builtin.shell: |
+    k3s kubectl get pods -n {{ teleport_namespace }} --no-headers -o custom-columns=":metadata.name" | grep "auth" | head -n 1
+  register: teleport_auth_pod
+  changed_when: false
+
+- name: Vérifier si l'utilisateur admin existe déjà
+  ansible.builtin.command: >
+    k3s kubectl exec -n {{ teleport_namespace }} {{ teleport_auth_pod.stdout | trim }} -- 
+    tctl users ls
+  register: teleport_existing_users
+  changed_when: false
+  ignore_errors: true 
+
+- name: Créer l'utilisateur admin (si absent)
+  ansible.builtin.command: >
+    k3s kubectl exec -n {{ teleport_namespace }} {{ teleport_auth_pod.stdout | trim }} -- 
+    tctl users add {{ teleport_admin_user }} 
+    --roles={{ teleport_admin_roles }} 
+    --logins={{ teleport_admin_logins }}
+  register: teleport_new_user_output
+  when: teleport_admin_user not in teleport_existing_users.stdout
+
+- name: Afficher le lien d'invitation (Nouvel utilisateur)
+  ansible.builtin.debug:
+    msg:
+      - "✅ UTILISATEUR CRÉÉ AVEC SUCCÈS"
+      - "---------------------------------------------------------"
+      - "{{ teleport_new_user_output.stdout_lines }}"
+      - "---------------------------------------------------------"
+  when: teleport_new_user_output.changed
+
+- name: Message si l'utilisateur existait déjà
+  ansible.builtin.debug:
+    msg: "L'utilisateur '{{ teleport_admin_user }}' existe déjà. Pas de nouveau lien généré."
+  when: not teleport_new_user_output.changed

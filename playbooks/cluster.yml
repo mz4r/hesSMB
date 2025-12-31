@@ -1,0 +1,188 @@
+---
+- name: Préparer tous les nœuds du cluster
+  hosts: k3s_cluster
+  become: true
+  tags: ['k3s_base']
+  roles:
+    - k3s_base
+
+- name: Installer K3s sur les control-plane (HA avec embedded etcd)
+  hosts: k3s_control_plane
+  become: true
+  serial: 1
+  tags: ['k3s', 'k3s_server']
+  roles:
+    - k3s_server
+
+- name: Installer K3s sur les workers
+  hosts: k3s_workers
+  become: true
+  tags: ['k3s', 'k3s_agent']
+  roles:
+    - k3s_agent
+
+- name: Déployer MetalLB (Load Balancer)
+  hosts: k3s_control_plane[0]
+  become: true
+  tags: ['metallb']
+  roles:
+    - metallb
+
+- name: Déployer Traefik (Ingress Controller)
+  hosts: k3s_control_plane[0]
+  become: true
+  tags: ['traefik']
+  roles:
+    - traefik
+
+- name: Déployer Cert-Manager et PKI
+  hosts: k3s_control_plane[0]
+  become: true
+  tags: ['certmanager']
+  roles:
+    - certmanager
+
+- name: Configuration DNS Automatique (WireGuard)
+  hosts: wireguard
+  become: true
+  tags: ['dns', 'smart_dns']
+  roles:
+    - smart_dns
+
+- name: Déployer Longhorn (Stockage distribué)
+  hosts: k3s_control_plane[0]
+  become: true
+  tags: ['longhorn']
+  roles:
+    - longhorn
+
+- name: Déployer Kubernetes Dashboard
+  hosts: k3s_control_plane[0]
+  become: true
+  tags: ['kube_dashboard', 'dashboard']
+  roles:
+    - kube_dashboard
+    
+
+- name: Configuration LDAP (LLDAP)
+  hosts: k3s_control_plane[0]
+  become: true
+  tags: ['ldap', 'lldap']
+  roles:
+    - lldap
+
+- name: Configuration Bastion (Teleport)
+  hosts: k3s_control_plane[0]
+  become: true
+  tags: ['bastion', 'teleport']
+  roles:
+    - teleport
+
+- name: Expose Dashboard and Longhorn via MetalLB
+  hosts: k3s_control_plane[0]
+  become: true
+  tasks:
+    # Expose KUBERNETES DASHBOARD
+    - name: Create LB for Kubernetes Dashboard
+      ansible.builtin.shell: |
+        cat <<EOF | k3s kubectl apply -f -
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: kubernetes-dashboard-lb
+          namespace: kubernetes-dashboard
+          labels:
+            k8s-app: kubernetes-dashboard
+        spec:
+          type: LoadBalancer
+          ports:
+            - port: 443
+              targetPort: 8443
+              protocol: TCP
+              name: https
+          selector:
+            k8s-app: kubernetes-dashboard
+        EOF
+      register: dashboard_lb
+      changed_when: "'created' in dashboard_lb.stdout or 'configured' in dashboard_lb.stdout"
+
+    # Expose LONGHORN UI
+    - name: Create LB for Longhorn UI
+      ansible.builtin.shell: |
+        cat <<EOF | k3s kubectl apply -f -
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: longhorn-frontend-lb
+          namespace: longhorn-system
+          labels:
+            app: longhorn-ui
+        spec:
+          type: LoadBalancer
+          ports:
+            - port: 80
+              targetPort: 8000
+              protocol: TCP
+              name: http
+          selector:
+            app: longhorn-ui
+        EOF
+      register: longhorn_lb
+      changed_when: "'created' in longhorn_lb.stdout or 'configured' in longhorn_lb.stdout"
+
+    # Get INFO
+    - name: Wait Metallb ip attribution
+      ansible.builtin.pause:
+        seconds: 15
+        prompt: "Wait Metallb ip attribution..."
+
+    - name: Get Dashboard IP
+      ansible.builtin.command: |
+        k3s kubectl get svc -n kubernetes-dashboard kubernetes-dashboard-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      register: dashboard_ip
+      changed_when: false
+      retries: 10
+      delay: 5
+      until: dashboard_ip.stdout != ""
+
+    - name: Get Longhorn IP
+      ansible.builtin.command: |
+        k3s kubectl get svc -n longhorn-system longhorn-frontend-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+      register: longhorn_ip
+      changed_when: false
+      retries: 10
+      delay: 5
+      until: longhorn_ip.stdout != ""
+
+    - name: Get token Dashboard
+      ansible.builtin.slurp:
+        src: /root/dashboard-admin-token.txt
+      register: dashboard_token
+      failed_when: false
+
+    - name: Print info
+      ansible.builtin.debug:
+        msg:
+          - "🔐 KUBERNETES DASHBOARD : https://{{ dashboard_ip.stdout }}"
+          - "   Token   : {{ dashboard_token.content | b64decode }}"
+          - "💾 LONGHORN UI : http://{{ longhorn_ip.stdout }}"
+
+- name: Récupérer le Kubeconfig
+  hosts: k3s_control_plane[0]
+  become: yes               
+  gather_facts: no          
+  
+  tasks:
+    - name: Récupérer le fichier kubeconfig (K3s)
+      ansible.builtin.fetch:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: ../kubeconfig_cluster
+        flat: yes
+
+    - name: Remplacer 127.0.0.1 par l'IP réelle du serveur dans le fichier local
+      ansible.builtin.replace:
+        path: ../kubeconfig_cluster
+        regexp: '127\.0\.0\.1'
+        replace: "{{ ansible_host }}"
+      delegate_to: localhost
+      become: no

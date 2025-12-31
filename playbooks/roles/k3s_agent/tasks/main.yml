@@ -1,0 +1,50 @@
+---
+- name: Vérifier si K3s agent est déjà installé
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s-agent
+  register: k3s_agent_binary
+
+- name: Vérifier la version de K3s agent installée
+  ansible.builtin.command: k3s-agent --version
+  register: k3s_agent_installed_version
+  changed_when: false
+  failed_when: false
+  when: k3s_agent_binary.stat.exists
+
+- name: Construire les options K3s pour l'agent
+  ansible.builtin.set_fact:
+    k3s_agent_exec_options: "{{ k3s_agent_options | join(' ') }}"
+
+- name: Attendre que le cluster K3s soit accessible
+  ansible.builtin.wait_for:
+    host: "{{ k3s_primary_master_ip }}"
+    port: 6443
+    timeout: "{{ k3s_wait_timeout }}"
+
+- name: Installer K3s agent (worker)
+  ansible.builtin.shell: |
+    curl -sfL {{ k3s_install_script_url }} | \
+    INSTALL_K3S_VERSION="{{ k3s_version }}" \
+    INSTALL_K3S_EXEC="agent {{ k3s_agent_exec_options }}" \
+    K3S_TOKEN="{{ k3s_token }}" \
+    K3S_URL="https://{{ k3s_primary_master_ip }}:6443" \
+    sh -
+  args:
+    creates: /etc/systemd/system/k3s-agent.service
+  when: not k3s_agent_binary.stat.exists or k3s_version not in k3s_agent_installed_version.stdout
+  register: k3s_agent_install
+
+- name: S'assurer que le service K3s agent est démarré et activé
+  ansible.builtin.systemd:
+    name: k3s-agent
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Attendre que l'agent soit prêt
+  ansible.builtin.pause:
+    seconds: 15
+
+- name: Message de confirmation
+  ansible.builtin.debug:
+    msg: "Worker {{ inventory_hostname }} installé et configuré avec succès"

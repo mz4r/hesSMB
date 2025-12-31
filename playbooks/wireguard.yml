@@ -1,0 +1,40 @@
+---
+- name: Installer wireguard server
+  hosts: wireguard
+  become: true
+  roles:
+    - wireguard
+
+- name: task pour patch a modifier dans le hardening pour fonctionnement final
+  hosts: wireguard
+  gather_facts: yes
+  become: true
+  tasks:
+    - name: Activer l'IP Forwarding (Nécessaire pour le routage VPN)
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+    - name: Configurer UFW pour accepter le routage (DEFAULT_FORWARD_POLICY)
+      ansible.builtin.lineinfile:
+        path: /etc/default/ufw
+        regexp: '^DEFAULT_FORWARD_POLICY='
+        line: 'DEFAULT_FORWARD_POLICY="ACCEPT"'
+
+    - name: Ajouter les règles NAT WireGuard (Interface auto-détectée)
+      ansible.builtin.blockinfile:
+        path: /etc/ufw/before.rules
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - NAT WIREGUARD"
+        insertbefore: BOF
+        block: |
+          *nat
+          :POSTROUTING ACCEPT [0:0]
+          -A POSTROUTING -s 10.20.0.0/24 -o {{ ansible_default_ipv4.interface }} -j MASQUERADE
+          COMMIT
+
+    - name: Reload UFW
+      community.general.ufw:
+        state: reloaded

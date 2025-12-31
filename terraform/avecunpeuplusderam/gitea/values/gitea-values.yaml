@@ -1,0 +1,78 @@
+# Configuration pour le chart "gitea"
+
+# --- CONFIGURATION GLOBALE ---
+gitea:
+  admin:
+    # Création automatique d'un admin au premier démarrageh
+    existingSecret: ""
+    username: "gitea_admin"
+    password: "ChangeMeNow!"
+    email: "postmaster@.mz4.re"
+
+  config:
+    APP_NAME: "Gitea Mz4r"
+    server:
+      ROOT_URL: "https://gitea.mz4.re/"
+      SSH_DOMAIN: "gitea.mz4.re"
+      DISABLE_SSH: false 
+      SSH_PORT: 22
+
+    # Intégration des métriques pour votre Prometheus
+    metrics:
+      ENABLED: true
+
+# --- PERSISTANCE (Stockage des dépôts Git) ---
+persistence:
+  enabled: true
+  size: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClass: "longhorn"
+
+# --- INGRESS (Accès HTTP/HTTPS) ---
+ingress:
+  enabled: true
+  className: nginx # ou traefik selon votre cluster
+  
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m" 
+
+  hosts:
+    - host: gitea.mz4.re
+      paths:
+        - path: /
+          pathType: Prefix
+
+  tls:
+    - secretName: gitea-tls
+      hosts:
+        - gitea.mz4.re
+
+# --- BASE DE DONNÉES (PostgreSQL inclus) ---
+postgresql:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+  # Tuning ressources DB
+  primary:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+
+# --- CACHE (Memcached inclus) ---
+memcached:
+  enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+
+# --- MONITORING ---
+# Active un ServiceMonitor pour que votre stack Prometheus le détecte auto
+serviceMonitor:
+  enabled: true

@@ -1,0 +1,90 @@
+---
+- name: Vérifier que kubectl est disponible
+  ansible.builtin.command: k3s kubectl version --client
+  changed_when: false
+  register: kubectl_check
+
+- name: Vérifier que open-iscsi est bien installé sur tous les nœuds
+  ansible.builtin.command: k3s kubectl get nodes -o jsonpath='{.items[*].metadata.name}'
+  register: cluster_nodes
+  changed_when: false
+
+- name: Créer le namespace Longhorn
+  ansible.builtin.command: k3s kubectl create namespace {{ longhorn_namespace }}
+  register: longhorn_ns_create
+  changed_when: "'created' in longhorn_ns_create.stdout"
+  failed_when:
+    - longhorn_ns_create.rc != 0
+    - "'AlreadyExists' not in longhorn_ns_create.stderr"
+
+- name: Télécharger le manifest Longhorn
+  ansible.builtin.get_url:
+    url: "{{ longhorn_manifest_url }}"
+    dest: "/tmp/longhorn.yaml"
+    mode: '0644'
+
+- name: Appliquer le manifest Longhorn
+  ansible.builtin.command: k3s kubectl apply -f /tmp/longhorn.yaml
+  register: longhorn_apply
+  changed_when: "'created' in longhorn_apply.stdout or 'configured' in longhorn_apply.stdout"
+
+- name: Attendre que les pods Longhorn Manager soient prêts
+  ansible.builtin.command: |
+    k3s kubectl wait --namespace {{ longhorn_namespace }} \
+      --for=condition=ready pod \
+      --selector=app=longhorn-manager \
+      --timeout={{ longhorn_wait_timeout }}s
+  register: longhorn_manager_wait
+  changed_when: false
+  retries: 3
+  delay: 20
+  until: longhorn_manager_wait.rc == 0
+
+- name: Attendre que le driver deployer soit complètement démarré (création de la StorageClass)
+  ansible.builtin.pause:
+    seconds: 45
+    prompt: "Attente du démarrage complet du driver deployer Longhorn..."
+
+- name: Vérifier le statut de Longhorn
+  ansible.builtin.command: k3s kubectl get pods -n {{ longhorn_namespace }}
+  register: longhorn_status
+  changed_when: false
+
+- name: Afficher le statut de Longhorn
+  ansible.builtin.debug:
+    var: longhorn_status.stdout_lines
+
+- name: Attendre que la StorageClass longhorn soit créée
+  ansible.builtin.command: k3s kubectl get storageclass longhorn
+  register: longhorn_sc_check
+  changed_when: false
+  retries: 15
+  delay: 10
+  until: longhorn_sc_check.rc == 0
+  failed_when: false
+
+- name: Vérifier les StorageClass créées par Longhorn
+  ansible.builtin.command: k3s kubectl get storageclass
+  register: storageclass_status
+  changed_when: false
+
+- name: Afficher les StorageClass
+  ansible.builtin.debug:
+    var: storageclass_status.stdout_lines
+
+- name: Désactiver la StorageClass par défaut de K3s (local-path)
+  ansible.builtin.command: |
+    k3s kubectl patch storageclass local-path \
+      -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+  register: local_path_undefault
+  changed_when: "'patched' in local_path_undefault.stdout"
+  failed_when: false
+
+- name: Définir Longhorn comme StorageClass par défaut
+  ansible.builtin.command: |
+    k3s kubectl patch storageclass longhorn \
+      -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+  register: longhorn_default_sc
+  changed_when: "'patched' in longhorn_default_sc.stdout"
+  failed_when: false
+  when: longhorn_sc_check.rc == 0

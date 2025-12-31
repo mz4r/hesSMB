@@ -1,0 +1,70 @@
+fullnameOverride: "monitoring-stack"
+
+grafana:
+  enabled: true
+  adminPassword: "admin"
+
+  persistence:
+    enabled: true
+    type: pvc
+    storageClassName: "longhorn"
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+
+  ingress:
+    enabled: true
+    ingressClassName: traefik
+    annotations:
+      cert-manager.io/cluster-issuer: "local-pki-issuer"
+      traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    hosts:
+      - grafana.mz4.re
+    tls:
+      - secretName: grafana-tls
+        hosts:
+          - grafana.mz4.re
+
+  service:
+    type: ClusterIP
+
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.loki.svc:3100
+      access: proxy
+      isDefault: false
+      jsonData:
+        maxLines: 1000
+
+prometheus:
+  enabled: true
+  
+  prometheusSpec:
+    retention: 15d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: "longhorn"
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+
+alertmanager:
+  enabled: true
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: "longhorn"
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 5Gi
+
+nodeExporter:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true

@@ -1,0 +1,22 @@
+apiVersion: "serving.kserve.io/v1beta1"
+kind: "InferenceService"
+metadata:
+  name: "qwen-mini"
+  namespace: "kserve"
+  annotations:
+    "sidecar.istio.io/inject": "false"
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: huggingface
+      args:
+        - --model_name=Qwen/Qwen1.5-0.5B-Chat
+        - --task=text-generation
+      resources:
+        requests:
+          cpu: "500m"
+          memory: "800Mi"
+        limits:
+          cpu: "2000m"
+          memory: "2Gi"

@@ -1,0 +1,86 @@
+---
+- name: Vérifier que kubectl est disponible
+  ansible.builtin.command: k3s kubectl version --client
+  changed_when: false
+  register: kubectl_check
+
+- name: Créer le namespace Cert-Manager
+  ansible.builtin.command: k3s kubectl create namespace {{ cert_manager_namespace }}
+  register: cm_ns_create
+  changed_when: "'created' in cm_ns_create.stdout"
+  failed_when:
+    - cm_ns_create.rc != 0
+    - "'AlreadyExists' not in cm_ns_create.stderr"
+
+- name: Télécharger le manifest Cert-Manager
+  ansible.builtin.get_url:
+    url: "{{ cert_manager_manifest_url }}"
+    dest: "/tmp/cert-manager.yaml"
+    mode: '0644'
+
+- name: Appliquer le manifest Cert-Manager
+  ansible.builtin.command: k3s kubectl apply -f /tmp/cert-manager.yaml
+  register: cm_apply
+  changed_when: "'created' in cm_apply.stdout or 'configured' in cm_apply.stdout"
+
+- name: Attendre que les pods Cert-Manager soient prêts
+  ansible.builtin.command: |
+    k3s kubectl wait --namespace {{ cert_manager_namespace }} \
+      --for=condition=ready pod \
+      --selector=app.kubernetes.io/instance=cert-manager \
+      --timeout={{ cert_manager_wait_timeout }}s
+  register: cm_wait
+  changed_when: false
+  retries: 5
+  delay: 10
+  until: cm_wait.rc == 0
+
+- name: Pause pour la propagation du Webhook (Crucial)
+  ansible.builtin.pause:
+    seconds: 30
+    prompt: "Attente de la disponibilité de l'API Webhook..."
+
+- name: Créer le fichier de configuration PKI
+  ansible.builtin.template:
+    src: pki_issuer.yaml.j2
+    dest: /tmp/pki_issuer.yaml
+    mode: '0644'
+
+- name: Appliquer la configuration PKI (Root CA & Issuer)
+  ansible.builtin.command: k3s kubectl apply -f /tmp/pki_issuer.yaml
+  register: pki_apply
+  changed_when: "'created' in pki_apply.stdout or 'configured' in pki_apply.stdout"
+
+- name: Attendre que le certificat Racine soit prêt
+  ansible.builtin.command: |
+    k3s kubectl wait --namespace {{ cert_manager_namespace }} \
+      --for=condition=ready certificate my-root-ca \
+      --timeout=60s
+  register: ca_wait
+  changed_when: false
+
+- name: Récupérer le certificat public (ca.crt)
+  ansible.builtin.shell: |
+    k3s kubectl get secret root-ca-secret -n {{ cert_manager_namespace }} -o jsonpath='{.data.ca\.crt}' | base64 -d
+  register: root_ca_cert
+  changed_when: false
+
+- name: Sauvegarder le certificat racine sur le noeud
+  ansible.builtin.copy:
+    content: "{{ root_ca_cert.stdout }}"
+    dest: "/root/root-ca.crt"
+    mode: '0644'
+
+- name: Récupérer le certificat racine en local (sur votre PC)
+  ansible.builtin.fetch:
+    src: "/root/root-ca.crt"
+    dest: "../certs/cluster-root-ca.crt"
+    flat: yes
+
+- name: Message de confirmation
+  ansible.builtin.debug:
+    msg: 
+      - "✅ PKI déployée avec succès !"
+      - "📝 Issuer à utiliser : 'local-pki-issuer'"
+      - "🔑 Le certificat racine est dans ./certs/cluster-root-ca.crt"
+      - "ℹ️  Importez ce fichier dans votre navigateur (Autorités) pour avoir le cadenas vert."

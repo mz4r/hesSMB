@@ -1,0 +1,41 @@
+- name: Vérifier que kubectl est disponible
+  ansible.builtin.command: k3s kubectl version --client
+  changed_when: false
+  register: kubectl_check
+
+- name: Créer le namespace LLDAP
+  ansible.builtin.command: k3s kubectl create namespace {{ lldap_namespace }}
+  register: lldap_ns_create
+  changed_when: "'created' in lldap_ns_create.stdout"
+  failed_when:
+    - lldap_ns_create.rc != 0
+    - "'AlreadyExists' not in lldap_ns_create.stderr"
+
+- name: Générer le manifest LLDAP depuis le template
+  ansible.builtin.template:
+    src: lldap-manifest.yaml.j2
+    dest: /tmp/lldap-deployment.yaml
+    mode: '0644'
+  register: lldap_template
+
+- name: Appliquer le manifest LLDAP
+  ansible.builtin.command: k3s kubectl apply -f /tmp/lldap-deployment.yaml
+  register: lldap_deploy
+  changed_when: "'created' in lldap_deploy.stdout or 'configured' in lldap_deploy.stdout"
+
+- name: Attendre que le pod LLDAP soit prêt
+  ansible.builtin.command: |
+    k3s kubectl wait --namespace {{ lldap_namespace }} \
+      --for=condition=ready pod \
+      --selector=app=lldap \
+      --timeout=120s
+  register: lldap_wait
+  changed_when: false
+  retries: 5
+  delay: 10
+  until: lldap_wait.rc == 0
+
+- name: Vérifier le statut de LLDAP
+  ansible.builtin.command: k3s kubectl get pods -n {{ lldap_namespace }}
+  register: lldap_status
+  changed_when: false

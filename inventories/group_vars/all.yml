@@ -1,0 +1,47 @@
+---
+# ============================================================================
+# Variables globales pour tous les nœuds du cluster
+# ============================================================================
+
+domain_name: "mz4.re"
+
+# Version de K3s à installer
+k3s_version: "v1.33.6+k3s1"
+
+# Token partagé pour l'authentification entre les nœuds du cluster
+# IMPORTANT : Changer cette valeur en production (min 32 caractères aléatoires)
+k3s_token: "AAAAC3NzaC1lZDI1NTE5AAAAIB8Ts6oxASAAAAC3NzaC1lZDI1NTE5AAAAIB8Ts6oxASAAAAC3NzaC1lZDI1NTE5AAAAIB8Ts6oxAS"
+
+# Premier control-plane (point d'entrée pour cluster-init)
+k3s_primary_master: "node1"
+k3s_primary_master_ip: "192.168.100.200"
+
+# Configuration MetalLB
+metallb_version: "v0.15.3"
+metallb_namespace: "metallb-system"
+metallb_ip_range: "10.0.2.40-10.0.2.50"  # Pool d'IP pour les services LoadBalancer
+
+# Configuration Longhorn
+longhorn_version: "v1.10.1"
+longhorn_namespace: "longhorn-system"
+
+# Configuration Kubernetes Dashboard
+rancher_version: "v2.7.0"
+rancher_namespace: "rancher"
+
+# Configuration Traefik
+traefik_version: "v3.6.4"
+traefik_namespace: "traefik"
+
+# Utilisateur système Ansible
+ansible_user: "root"
+ansible_become: true
+ansible_become_method: sudo
+
+# Configuration réseau
+k3s_cluster_cidr: "10.42.0.0/16"
+k3s_service_cidr: "10.43.0.0/16"
+
+# Répertoire d'installation K3s
+k3s_config_dir: "/etc/rancher/k3s"
+k3s_data_dir: "/var/lib/rancher/k3s"

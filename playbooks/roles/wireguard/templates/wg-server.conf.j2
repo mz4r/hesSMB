@@ -1,0 +1,17 @@
+[Interface]
+Address = {{ wg_server_internal_ip }}/{{ wg_server_internal_mask }}
+ListenPort = {{ wg_server_port }}
+PrivateKey = {{ server_private_key }}
+
+# Règles pare-feu (Essentiel pour que le NAT fonctionne vers votre cluster K3s)
+PostUp = iptables -A FORWARD -i %i -j ACCEPT; iptables -t nat -A POSTROUTING -o enp3s0 -j MASQUERADE
+PostDown = iptables -D FORWARD -i %i -j ACCEPT; iptables -t nat -D POSTROUTING -o enp3s0 -j MASQUERADE
+
+# --- BLOCS CLIENTS (PEERS) ---
+{% for peer in peers %}
+# Client: {{ peer.0.name }}
+[Peer]
+# peer.0 = infos client (inventaire), peer.1 = info clé publique (slurp)
+PublicKey = {{ peer.1['content'] | b64decode | trim }}
+AllowedIPs = {{ peer.0.ip }}
+{% endfor %}

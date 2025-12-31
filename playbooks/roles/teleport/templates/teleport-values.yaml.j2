@@ -1,0 +1,36 @@
+clusterName: {{ teleport_cluster_name }}
+
+publicAddr:
+  - {{ teleport_domain }}:443
+
+proxyListenerMode: multiplex
+
+auth:
+  type: local
+  second_factor: otp
+  proxy_protocol: "off" 
+  authentication:
+    type: local
+
+proxy:
+  publicAddr: "{{ teleport_domain }}:443"
+  
+  service:
+    type: ClusterIP
+  
+  https:
+    listenAddr: 0.0.0.0:3080
+
+persistence:
+  enabled: true
+  storageClassName: {{ teleport_storage_class }}
+  volumeSize: {{ teleport_storage_size }}
+
+ingress:
+  enabled: false
+
+highAvailability:
+  replicaCount: 1
+
+separatePostgresListener: false
+separateMongoListener: false
