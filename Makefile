@@ -28,16 +28,14 @@ build:
 	packer build -var "iso_path=file://${PWD}/packer/iso/debian-13.2.0-amd64-netinst.iso" -var "ssh_pub_key_path=file://${PWD}/keys/id_rsa.pub" debian13.pkr.hcl
 
 deploy:
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/deploy-vm.yml
-	sleep 20
+	ansible-playbook -i ./inventories/inventory.yaml playbooks/deploy-vm.yml 
+	sleep 60
 	ansible-playbook -i ./inventories/inventory.yaml playbooks/hardening.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
 	ansible-playbook -i ./inventories/inventory.yaml playbooks/wireguard.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
 
 cluster:
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/2-k3s.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
-
-hardening:
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/hardening.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
+	ansible-playbook -i ./inventories/inventory.yaml playbooks/cluster.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
+	ansible-playbook -i ./inventories/inventory.yaml playbooks/dns.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
 
 
 argocd:
@@ -51,6 +49,14 @@ monitoring:
 kserve:
 	terraform -chdir=terraform/kserve init
 	terraform -chdir=terraform/kserve apply -auto-approve
+
+
+hardening:
+	ansible-playbook -i ./inventories/inventory.yaml playbooks/hardening.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
+
+
+dns:
+	ansible-playbook -i ./inventories/inventory.yaml playbooks/dns.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
 
 vm-stop:
 	virsh destroy node1
@@ -74,4 +80,4 @@ rm-deploy:
 	virsh undefine node3 --remove-all-storage
 	rm -fr /var/lib/libvirt/images/node*
 
-all: build deploy cluster argocd monitoring kserve
+all: deploy cluster argocd dns

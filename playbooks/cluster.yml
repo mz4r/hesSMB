@@ -1,5 +1,5 @@
 ---
-- name: Préparer tous les nœuds du cluster
+- name: Préparer tous les nœuds du cluster (Base System)
   hosts: k3s_cluster
   become: true
   tags: ['k3s_base']
@@ -9,7 +9,7 @@
 - name: Installer K3s sur les control-plane (HA avec embedded etcd)
   hosts: k3s_control_plane
   become: true
-  serial: 1
+  serial: 1 
   tags: ['k3s', 'k3s_server']
   roles:
     - k3s_server
@@ -42,13 +42,6 @@
   roles:
     - certmanager
 
-- name: Configuration DNS Automatique (WireGuard)
-  hosts: wireguard
-  become: true
-  tags: ['dns', 'smart_dns']
-  roles:
-    - smart_dns
-
 - name: Déployer Longhorn (Stockage distribué)
   hosts: k3s_control_plane[0]
   become: true
@@ -62,7 +55,6 @@
   tags: ['kube_dashboard', 'dashboard']
   roles:
     - kube_dashboard
-    
 
 - name: Configuration LDAP (LLDAP)
   hosts: k3s_control_plane[0]
@@ -81,8 +73,8 @@
 - name: Expose Dashboard and Longhorn via MetalLB
   hosts: k3s_control_plane[0]
   become: true
+  tags: ['expose_services']
   tasks:
-    # Expose KUBERNETES DASHBOARD
     - name: Create LB for Kubernetes Dashboard
       ansible.builtin.shell: |
         cat <<EOF | k3s kubectl apply -f -
@@ -106,7 +98,6 @@
       register: dashboard_lb
       changed_when: "'created' in dashboard_lb.stdout or 'configured' in dashboard_lb.stdout"
 
-    # Expose LONGHORN UI
     - name: Create LB for Longhorn UI
       ansible.builtin.shell: |
         cat <<EOF | k3s kubectl apply -f -
@@ -130,29 +121,23 @@
       register: longhorn_lb
       changed_when: "'created' in longhorn_lb.stdout or 'configured' in longhorn_lb.stdout"
 
-    # Get INFO
-    - name: Wait Metallb ip attribution
-      ansible.builtin.pause:
-        seconds: 15
-        prompt: "Wait Metallb ip attribution..."
-
-    - name: Get Dashboard IP
+    - name: Wait for MetalLB IP attribution
       ansible.builtin.command: |
         k3s kubectl get svc -n kubernetes-dashboard kubernetes-dashboard-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
       register: dashboard_ip
-      changed_when: false
-      retries: 10
-      delay: 5
       until: dashboard_ip.stdout != ""
+      retries: 20
+      delay: 5
+      changed_when: false
 
     - name: Get Longhorn IP
       ansible.builtin.command: |
         k3s kubectl get svc -n longhorn-system longhorn-frontend-lb -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
       register: longhorn_ip
-      changed_when: false
-      retries: 10
-      delay: 5
       until: longhorn_ip.stdout != ""
+      retries: 20
+      delay: 5
+      changed_when: false
 
     - name: Get token Dashboard
       ansible.builtin.slurp:
@@ -160,17 +145,11 @@
       register: dashboard_token
       failed_when: false
 
-    - name: Print info
-      ansible.builtin.debug:
-        msg:
-          - "🔐 KUBERNETES DASHBOARD : https://{{ dashboard_ip.stdout }}"
-          - "   Token   : {{ dashboard_token.content | b64decode }}"
-          - "💾 LONGHORN UI : http://{{ longhorn_ip.stdout }}"
-
-- name: Récupérer le Kubeconfig
+- name: Récupérer le Kubeconfig (Pour usage via VPN)
   hosts: k3s_control_plane[0]
   become: yes               
   gather_facts: no          
+  tags: ['kubeconfig']
   
   tasks:
     - name: Récupérer le fichier kubeconfig (K3s)
@@ -179,10 +158,54 @@
         dest: ../kubeconfig_cluster
         flat: yes
 
-    - name: Remplacer 127.0.0.1 par l'IP réelle du serveur dans le fichier local
+    - name: Remplacer 127.0.0.1 par l'IP interne du VPN (192.168.100.200)
       ansible.builtin.replace:
         path: ../kubeconfig_cluster
         regexp: '127\.0\.0\.1'
-        replace: "{{ ansible_host }}"
+        replace: "{{ ansible_host }}" 
       delegate_to: localhost
       become: no
+
+    - name: "INFO: Récupérer la liste des Ingress (Noms de domaine)"
+      become: yes
+      ansible.builtin.command: k3s kubectl get ingress -A -o json
+      register: k8s_ingress_raw
+      changed_when: false
+
+    - name: "INFO: Récupérer la liste des LoadBalancers (IPs directes)"
+      become: yes
+      ansible.builtin.command: k3s kubectl get svc -A -o json
+      register: k8s_svc_raw
+      changed_when: false
+
+    - name: "RÉCAPITULATIF DES ACCÈS AU CLUSTER"
+      ansible.builtin.debug:
+        msg:
+          - "🚀 SERVICES ACCESSIBLES :"
+          - "---------------------------------------------------"
+          - "🌐 PAR DOMAINE (Ingress Traefik) :"
+          - "{{ k8s_ingress_raw.stdout | from_json | json_query(ingress_query) | list }}"
+          - "---------------------------------------------------"
+          - "🔌 PAR IP DIRECTE (MetalLB) :"
+          - "{{ k8s_svc_raw.stdout | from_json | json_query(lb_query) | list }}"
+          - "---------------------------------------------------"
+      vars:
+        ingress_query: "items[*].spec.rules[*].host | []"
+        lb_query: "items[?spec.type=='LoadBalancer'].{Service: metadata.name, Namespace: metadata.namespace, IP: status.loadBalancer.ingress[0].ip}"
+
+    - name: "INFO: Récupérer la liste des IngressRoutes (Traefik CRD)"
+      become: yes
+      ansible.builtin.command: k3s kubectl get ingressroute -A -o json
+      register: k8s_ingressroute_raw
+      changed_when: false
+
+    - name: "RÉCAPITULATIF DES ROUTES TRAEFIK (CRD)"
+      ansible.builtin.debug:
+        msg:
+          - "🚀 ROUTES TRAEFIK DÉTECTÉES :"
+          - "---------------------------------------------------"
+          - "{{ k8s_ingressroute_raw.stdout | from_json | json_query(ingressroute_query) }}"
+          - "---------------------------------------------------"
+      vars:
+        # Cette requête extrait le Namespace, le Nom de la route et la règle de matching (Host, Path, etc.)
+        ingressroute_query: "items[*].{Namespace: metadata.namespace, Name: metadata.name, MatchRules: spec.routes[*].match}"

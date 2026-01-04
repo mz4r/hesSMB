@@ -38,3 +38,41 @@ extraObjects:
           port: 80
       tls:
         secretName: argocd-tls
+
+configs:
+  cm:
+    url: "https://argocd.mz4.re" 
+    dex.config: |
+      connectors:
+      - type: ldap
+        id: lldap
+        name: LLDAP
+        config:
+          host: lldap.lldap.svc.cluster.local:3890
+          insecureNoSSL: true
+          insecureSkipVerify: true
+          
+          bindDN: "uid=admin,ou=people,dc=mz4,dc=re"
+          bindPW: "changeme"
+          
+          userSearch:
+            baseDN: "ou=people,dc=mz4,dc=re"
+            filter: "(objectClass=person)"
+            username: uid
+            idAttr: uid
+            emailAttr: mail
+            nameAttr: displayName
+            
+          groupSearch:
+            baseDN: "ou=groups,dc=mz4,dc=re"
+            filter: "(objectClass=groupOfUniqueNames)"
+            userMatchers:
+            - userAttr: uid
+              groupAttr: member
+            nameAttr: cn
+
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      g, argocd-admins, role:admin
+    scopes: '[groups]'

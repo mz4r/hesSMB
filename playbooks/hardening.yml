@@ -1,8 +1,8 @@
-- name: Install Kubernetes Cluster (Single Node)
-  hosts: all
-  become: yes
-  roles:
-    - ./roles/DEBIAN12-CIS
+# - name: Install Kubernetes Cluster (Single Node)
+#   hosts: vms
+#   become: yes
+#   roles:
+#     - ./roles/DEBIAN12-CIS
 
 - name: task pour patch a modifier dans le hardening pour fonctionnement final
   hosts: all
@@ -52,3 +52,59 @@
         regexp: '^127\.0\.0\.1'
         line: "127.0.0.1 {{ inventory_hostname }} localhost"
         state: present
+
+
+
+- name: task pour patch a modifier dans le hardening pour fonctionnement final
+  gather_facts: yes
+  become: true
+  hosts: vms
+  tasks:
+    - name: "FIX DISK: Installer les outils nécessaires (parted & growpart)"
+      become: yes
+      ansible.builtin.package:
+        name:
+          - parted
+          - cloud-guest-utils
+        state: present
+        update_cache: yes
+
+    - name: "FIX DISK: Vérifier les partitions existantes"
+      become: yes
+      shell: "lsblk -ln -o NAME /dev/vda"
+      register: disk_partitions
+      changed_when: false
+
+    - name: "FIX DISK: Désactiver le SWAP (si présent)"
+      become: yes
+      command: swapoff -a
+      when: "'vda5' in disk_partitions.stdout"
+      ignore_errors: yes
+
+    - name: "FIX DISK: Supprimer la partition logique vda5 (si elle existe)"
+      become: yes
+      command: parted /dev/vda rm 5
+      when: "'vda5' in disk_partitions.stdout"
+
+    - name: "FIX DISK: Supprimer la partition étendue vda2 (si elle existe)"
+      become: yes
+      command: parted /dev/vda rm 2
+      when: "'vda2' in disk_partitions.stdout"
+
+    - name: "FIX DISK: Agrandir la partition racine (vda1)"
+      become: yes
+      command: "growpart /dev/vda 1"
+      register: grow_root
+      failed_when: grow_root.rc != 0 and grow_root.rc != 1
+      changed_when: grow_root.rc == 0
+
+    - name: "FIX DISK: Étendre le système de fichiers (ext4)"
+      become: yes
+      command: "resize2fs /dev/vda1"
+      when: grow_root.rc == 0 or grow_root.rc == 1
+      register: resize_fs
+      changed_when: "'The filesystem on' in resize_fs.stdout"
+
+    - name: Confirmation
+      debug:
+        msg: "Opération terminée. Disque étendu."

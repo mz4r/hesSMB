@@ -3,4 +3,10 @@ wg_interface: wg0
 wg_server_port: 51820
 wg_server_internal_mask: 24
 server_keys_dir: "/root/wireguard-keys"
-wg_client_dns: 10.20.0.1
+wg_client_dns: "192.168.100.200"
+
+wireguard_port: 51820
+wan_interface: "eno1"
+vm_bridge_interface: "virbr1"
+vpn_subnet: "10.20.0.0/24"
+vm_subnet: "192.168.100.0/24"

@@ -3,34 +3,50 @@ all:
     ansible_python_interpreter: /usr/bin/python3
     vm_images_dir: "/var/lib/libvirt/images"
     base_image: "base-images/debian13-hardening-cis.qcow2"
-  children:
-    vms:
-      hosts:
-        node1:
-          ansible_host: 192.168.100.200
-          memory: 4096
-          vcpus: 3
-          mac: "52:54:00:00:02:00"
+    k3s_pod_cidr: "10.42.0.0/16"
+    k3s_service_cidr: "10.43.0.0/16"
 
-          wg_server_public_ip: 192.168.100.200
+  children:
+    hypervisors:
+      hosts:
+        dedicatedserver:
+          ansible_host: 192.168.1.103
+          ansible_user: root
+          libvirt_network: "smb-net" 
+
+          wg_server_public_ip: 192.168.1.103
           wg_server_internal_ip: 10.20.0.1
           wg_server_port: 51821
-          
           wg_clients:
             - name: admin
               ip: 10.20.0.2/32
+              allowed_ips: "10.20.0.0/24, 192.168.100.0/24, 10.42.0.0/16, 10.43.0.0/16"
+      
+    vms:
+      vars:
+        ansible_ssh_common_args: '-o ProxyCommand="ssh -W %h:%p -q root@192.168.1.103"'
+      
+      hosts:
+        node1:
+          ansible_host: 192.168.100.200
+          memory: 8096
+          vcpus: 4
+          mac: "52:54:00:00:02:00"
+          disk_size: 60G
 
         node2:
           ansible_host: 192.168.100.201
-          memory: 4096
-          vcpus: 3
+          memory: 8096
+          vcpus: 4
           mac: "52:54:00:00:03:00"
+          disk_size: 60G
 
         node3:
           ansible_host: 192.168.100.202
-          memory: 4096
-          vcpus: 3
+          memory: 8096
+          vcpus: 4
           mac: "52:54:00:00:04:00"
+          disk_size: 60G
 
     k3s_control_plane:
       hosts:
@@ -48,4 +64,4 @@ all:
 
     wireguard:
       hosts:
-        node1:
+        dedicatedserver:

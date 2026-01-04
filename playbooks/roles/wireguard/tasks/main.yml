@@ -1,13 +1,15 @@
 ---
-- name: Installer WireGuard et outils
+- name: Installer WireGuard et UFW
   become: yes
-  package:
+  ansible.builtin.apt:
     name:
       - wireguard
       - iptables
+      - ufw
     state: present
+    update_cache: yes
 
-- name: Créer le dossier de clés sur le serveur distant
+- name: Créer le dossier de clés
   become: yes
   file:
     path: "{{ server_keys_dir }}"
@@ -16,46 +18,98 @@
     owner: root
     group: root
 
-- name: Générer paire de clés SERVEUR (si absente)
+- name: Générer et lire les clés (Bloc condensé)
   become: yes
-  shell: "wg genkey | tee {{ server_keys_dir }}/server_private.key | wg pubkey > {{ server_keys_dir }}/server_public.key"
-  args:
-    creates: "{{ server_keys_dir }}/server_private.key"
+  block:
+    - shell: "wg genkey | tee {{ server_keys_dir }}/server_private.key | wg pubkey > {{ server_keys_dir }}/server_public.key"
+      args:
+        creates: "{{ server_keys_dir }}/server_private.key"
+    - slurp:
+        src: "{{ server_keys_dir }}/{{ item }}"
+      loop: [server_private.key, server_public.key]
+      register: server_keys
 
-- name: Lire la clé privée du serveur
+- name: Générer et lire les clés Clients
   become: yes
-  slurp:
-    src: "{{ server_keys_dir }}/server_private.key"
-  register: server_priv_file
+  block:
+    - shell: "wg genkey | tee {{ server_keys_dir }}/{{ item.name }}_private.key | wg pubkey > {{ server_keys_dir }}/{{ item.name }}_public.key"
+      args:
+        creates: "{{ server_keys_dir }}/{{ item.name }}_private.key"
+      loop: "{{ wg_clients }}"
+    - slurp:
+        src: "{{ server_keys_dir }}/{{ item.name }}_public.key"
+      loop: "{{ wg_clients }}"
+      register: client_pub_files
+    - slurp:
+        src: "{{ server_keys_dir }}/{{ item.name }}_private.key"
+      loop: "{{ wg_clients }}"
+      register: client_priv_files
 
-- name: Lire la clé publique du serveur
+- name: Activer IP Forwarding
   become: yes
-  slurp:
-    src: "{{ server_keys_dir }}/server_public.key"
-  register: server_pub_file
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    sysctl_set: yes
+    state: present
+    reload: yes
 
-- name: Générer paire de clés CLIENTS (si absentes)
+- name: Configurer UFW Forward Policy à ACCEPT
   become: yes
-  shell: "wg genkey | tee {{ server_keys_dir }}/{{ item.name }}_private.key | wg pubkey > {{ server_keys_dir }}/{{ item.name }}_public.key"
-  args:
-    creates: "{{ server_keys_dir }}/{{ item.name }}_private.key"
-  loop: "{{ wg_clients }}"
+  ansible.builtin.lineinfile:
+    path: /etc/default/ufw
+    regexp: '^DEFAULT_FORWARD_POLICY='
+    line: 'DEFAULT_FORWARD_POLICY="ACCEPT"'
+  notify: Reload UFW
 
-- name: Lire les clés privées des clients
+- name: Configurer le DOUBLE NAT dans UFW (before.rules)
   become: yes
-  slurp:
-    src: "{{ server_keys_dir }}/{{ item.name }}_private.key"
-  register: client_priv_files
-  loop: "{{ wg_clients }}"
+  ansible.builtin.blockinfile:
+    path: /etc/ufw/before.rules
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - NAT WIREGUARD"
+    insertbefore: BOF
+    block: |
+      *nat
+      :POSTROUTING ACCEPT [0:0]
+      -A POSTROUTING -s {{ vpn_subnet }} -o {{ wan_interface }} -j MASQUERADE
+      -A POSTROUTING -s {{ vpn_subnet }} -o {{ vm_bridge_interface }} -j MASQUERADE
+      COMMIT
+  notify: Reload UFW
 
-- name: Lire les clés publiques des clients
+- name: Ouvrir les ports SSH et WireGuard
   become: yes
-  slurp:
-    src: "{{ server_keys_dir }}/{{ item.name }}_public.key"
-  register: client_pub_files
-  loop: "{{ wg_clients }}"
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    comment: "{{ item.comment }}"
+  loop:
+    - { port: '22', proto: 'tcp', comment: 'SSH Access' }
+    - { port: "{{ wireguard_port }}", proto: 'udp', comment: 'WireGuard VPN' }
 
-- name: Générer les fichiers .conf pour les CLIENTS
+- name: Créer le script de persistance UFW (after.init)
+  become: yes
+  copy:
+    dest: /etc/ufw/after.init
+    mode: '0755'
+    content: |
+      #!/bin/sh
+      # Script généré par Ansible pour WireGuard
+      # Force l'insertion des règles FORWARD en 1ère position pour passer avant Libvirt
+      
+      # 1. VPN vers VMs
+      iptables -I FORWARD 1 -i wg0 -o {{ vm_bridge_interface }} -j ACCEPT
+      
+      # 2. VMs vers VPN
+      iptables -I FORWARD 1 -i {{ vm_bridge_interface }} -o wg0 -j ACCEPT
+      
+      # 3. Log (Optionnel, pour debug)
+      # logger "UFW after.init: WireGuard/Libvirt rules inserted"
+      
+      exit 0
+  notify: Reload UFW
+
+- name: Générer les fichiers .conf Clients
   become: yes
   template:
     src: templates/wg-client.conf.j2
@@ -64,25 +118,37 @@
   vars:
     client: "{{ item.0 }}"
     client_private_key: "{{ item.1['content'] | b64decode | trim }}"
-    server_public_key: "{{ server_pub_file['content'] | b64decode | trim }}"
+    server_public_key: "{{ server_keys.results[1]['content'] | b64decode | trim }}"
   loop: "{{ wg_clients | zip(client_priv_files.results) | list }}"
 
-- name: Activer IP Forwarding
-  become: yes
-  sysctl:
-    name: net.ipv4.ip_forward
-    value: '1'
-    sysctl_set: yes
-    state: present
-    reload: yes
-
-- name: Déployer la configuration serveur WireGuard
+- name: Déployer la configuration Serveur
   become: yes
   template:
     src: templates/wg-server.conf.j2
     dest: "/etc/wireguard/{{ wg_interface }}.conf"
     mode: '0600'
   vars:
-    server_private_key: "{{ server_priv_file['content'] | b64decode | trim }}"
+    server_private_key: "{{ server_keys.results[0]['content'] | b64decode | trim }}"
     peers: "{{ wg_clients | zip(client_pub_files.results) | list }}"
   notify: Restart WireGuard
+
+- name: Démarrer le service WireGuard
+  become: yes
+  systemd:
+    name: "wg-quick@{{ wg_interface }}"
+    state: started
+    enabled: yes
+
+- name: Lire et afficher les configs
+  become: yes
+  ansible.builtin.slurp:
+    src: "{{ server_keys_dir }}/{{ item.name }}.conf"
+  register: all_client_confs
+  loop: "{{ wg_clients }}"
+
+- name: 🟢 AFFICHER LES CLIENTS 🟢
+  ansible.builtin.debug:
+    msg: "{{ (item.content | b64decode).split('\n') }}"
+  loop: "{{ all_client_confs.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"

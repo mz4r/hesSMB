@@ -85,3 +85,11 @@ Les services gérés sont :
 - Mise en place de rancher pour une meilleur visualisation
 - Mise en place de longhorn pour gestion du volume persistent entre les 3 nodes
 - Mise en place d'un repo gitops dans le path /iaplateform du repo 
+
+
+# Url déployé :
+https://auth.mz4.re/
+https://argocd.mz4.re/
+https://keel.mz4.re/
+https://grafana.mz4.re/
+https://teleport.mz4.re/

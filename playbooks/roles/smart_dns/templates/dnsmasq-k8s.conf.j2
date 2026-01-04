@@ -1,13 +1,18 @@
 # ==========================================================
 # CONFIGURATION DNS DYNAMIQUE (Généré par Ansible)
 # ==========================================================
-# Domaine racine
+# Domaine racine du cluster
+local=/{{ domain_name | default('mz4.re') }}/
 domain={{ domain_name | default('mz4.re') }}
 
+# 1. Entrée Wildcard pour Traefik (Ingress)
+# Tout ce qui est *.mz4.re pointera vers l'IP de Traefik
 {% if traefik_lb is defined and traefik_lb %}
 address=/.{{ domain_name | default('mz4.re') }}/{{ traefik_lb.ip }}
 {% endif %}
 
+# 2. Entrées spécifiques pour les autres LoadBalancers
+# (Utile si vous avez des services exposés avec leur propre IP MetalLB hors Traefik)
 {% for svc in lb_services %}
 {% if traefik_lb is not defined or svc.ip != traefik_lb.ip %}
 # Service: {{ svc.name }} (Namespace: {{ svc.namespace }})

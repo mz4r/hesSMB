@@ -1,7 +1,4 @@
 ---
-- name: Reset complet de UFW
-  community.general.ufw:
-    state: reset
 - name: Appliquer les règles UFW
   community.general.ufw:
     rule: allow

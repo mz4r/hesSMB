@@ -1,10 +1,16 @@
 - name: Déployer les VMs locales avec IP statique
-  hosts: localhost
+  hosts: hypervisors
   become: yes
   gather_facts: no
   collections:
     - community.libvirt
   tasks:
+    - name: Installer package
+      become: yes
+      package:
+        name:
+          - ufw
+        state: present
     - name: Construire la liste des VMs depuis l'inventory
       set_fact:
         vms: |
@@ -19,7 +25,8 @@
                 'memory': hostvars[host]['memory'],
                 'vcpus': hostvars[host]['vcpus'],
                 'mac': hostvars[host]['mac'],
-                'ip': ip
+                'ip': ip,
+                'disk_size': hostvars[host]['disk_size'] | default('20G')
               }) %}
           {% endfor %}
           {{ list }}
@@ -44,6 +51,7 @@
             </dns>
             <ip address="192.168.100.1" netmask="255.255.255.0">
               <dhcp>
+              <range start='192.168.100.2' end='192.168.100.199'/>
               {% for vm in vms %}
                 <host mac='{{ vm.mac }}' ip='{{ vm.ip }}' name='{{ vm.name }}'/>
               {% endfor %}
@@ -70,8 +78,42 @@
       loop: "{{ vms }}"
       args:
         creates: "{{ vm_images_dir }}/{{ item.name }}/{{ item.name }}.qcow2"
-    
 
+
+# 1. On récupère les infos du disque avec l'option -U (Force Share)
+    # Cela permet de lire les infos même si la VM utilise le disque
+    - name: "CHECK: Récupérer la taille actuelle des disques"
+      command: "qemu-img info -U --output=json {{ vm_images_dir }}/{{ item.name }}/{{ item.name }}.qcow2"
+      register: current_disk_info
+      changed_when: false
+      loop: "{{ vms }}"
+
+    # 2. On applique le redimensionnement UNIQUEMENT si nécessaire
+    - name: Appliquer le redimensionnement du disque
+      shell: |
+        # On vérifie si la VM tourne (state 'running') via virsh
+        vm_state=$(virsh domstate {{ item.0.name }} 2>/dev/null || echo "shut off")
+
+        if [ "$vm_state" = "running" ]; then
+            # Cas 1 : VM allumée -> virsh blockresize (A chaud)
+            echo "VM is running, using virsh blockresize..."
+            virsh blockresize {{ item.0.name }} {{ vm_images_dir }}/{{ item.0.name }}/{{ item.0.name }}.qcow2 {{ item.0.disk_size }}
+        else
+            # Cas 2 : VM éteinte -> qemu-img resize (A froid)
+            echo "VM is stopped, using qemu-img resize..."
+            qemu-img resize {{ vm_images_dir }}/{{ item.0.name }}/{{ item.0.name }}.qcow2 {{ item.0.disk_size }}
+        fi
+      loop: "{{ vms | zip(current_disk_info.results) | list }}"
+      register: resize_output
+      
+      # CONDITION DE DÉCLENCHEMENT :
+      # On compare la taille virtuelle actuelle (en bytes) avec la cible (convertie en bytes)
+      # Le filtre 'human_to_bytes' gère "50G" -> 53687091200
+      when: >
+        (item.1.stdout | from_json)['virtual-size'] < (item.0.disk_size | human_to_bytes)
+      
+      changed_when: "'resized' in resize_output.stdout or 'Block device' in resize_output.stdout"
+      
     - name: Définir les VMs
       community.libvirt.virt:
         name: "{{ item.name }}"
@@ -113,3 +155,5 @@
         name: "{{ item.name }}"
         state: running
       loop: "{{ vms }}"
+
+    

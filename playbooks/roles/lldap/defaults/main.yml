@@ -9,3 +9,10 @@ lldap_jwt_secret: "changemechangemechangemechangemechangemechangemechangemechang
 
 lldap_storage_size: "1Gi"
 lldap_storage_class: "longhorn"
+
+lldap_api_url: "https://{{ lldap_domain }}"
+
+# Détails du compte à créer pour ArgoCD
+lldap_argocd_user: "argocd"
+lldap_argocd_pass: "ChangerCeMotDePasseSecurise!"
+lldap_argocd_group: "argocd-admins"

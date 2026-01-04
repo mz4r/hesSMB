@@ -1,16 +1,9 @@
 ---
-- name: Installer wireguard server
+- name: Installer et configurer WireGuard avec Routage et NAT
   hosts: wireguard
   become: true
-  roles:
-    - wireguard
-
-- name: task pour patch a modifier dans le hardening pour fonctionnement final
-  hosts: wireguard
-  gather_facts: yes
-  become: true
-  tasks:
-    - name: Activer l'IP Forwarding (Nécessaire pour le routage VPN)
+  pre_tasks:
+    - name: Activer l'IP Forwarding (Indispensable pour le VPN)
       ansible.posix.sysctl:
         name: net.ipv4.ip_forward
         value: '1'
@@ -18,13 +11,13 @@
         state: present
         reload: yes
 
-    - name: Configurer UFW pour accepter le routage (DEFAULT_FORWARD_POLICY)
+    - name: Configurer UFW DEFAULT_FORWARD_POLICY à ACCEPT
       ansible.builtin.lineinfile:
         path: /etc/default/ufw
         regexp: '^DEFAULT_FORWARD_POLICY='
         line: 'DEFAULT_FORWARD_POLICY="ACCEPT"'
 
-    - name: Ajouter les règles NAT WireGuard (Interface auto-détectée)
+    - name: Injecter les règles NAT dans UFW (before.rules)
       ansible.builtin.blockinfile:
         path: /etc/ufw/before.rules
         marker: "# {mark} ANSIBLE MANAGED BLOCK - NAT WIREGUARD"
@@ -32,9 +25,26 @@
         block: |
           *nat
           :POSTROUTING ACCEPT [0:0]
-          -A POSTROUTING -s 10.20.0.0/24 -o {{ ansible_default_ipv4.interface }} -j MASQUERADE
+          # Règle de Masquerade dynamique sur l'interface détectée
+          -A POSTROUTING -s 10.20.0.0/24 -o eno1 -j MASQUERADE
           COMMIT
 
-    - name: Reload UFW
+    - name: Appliquer les règles de pare-feu UFW
+      community.general.ufw:
+        rule: allow
+        port: "{{ item.port | default(omit) }}"
+        proto: "{{ item.proto | default('any') }}"
+        src: "{{ item.src | default('any') }}"
+        comment: "{{ item.comment }}"
+      loop:
+        - { port: '22', proto: 'tcp', comment: 'SSH Access (Anti-lockout)' }
+        - { port: '51821', proto: 'udp', comment: 'WireGuard VPN Port' }
+        - { src: '10.20.0.0/24', comment: 'Allow VPN Clients' }
+        - { src: '192.168.100.0/24', comment: 'Allow VMs Response' }
+
+    - name: Recharger UFW pour appliquer le NAT et les règles
       community.general.ufw:
         state: reloaded
+
+  roles:
+    - wireguard

@@ -1,16 +1,9 @@
-# ==============================================================================
-# 1. NAMESPACE MONITORING
-# ==============================================================================
 resource "kubernetes_namespace" "monitoring" {
   metadata {
     name = "monitoring"
   }
 }
 
-# ==============================================================================
-# 2. CERTIFICAT GRAFANA (Via Cert-Manager)
-# ==============================================================================
-# Plus besoin de charger les fichiers manuellement, Cert-Manager s'en occupe
 resource "kubernetes_manifest" "grafana_cert" {
   manifest = {
     apiVersion = "cert-manager.io/v1"

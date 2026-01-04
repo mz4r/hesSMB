@@ -6,6 +6,48 @@
       - jq
     state: present
 
+# --- 1. PRÉPARATION SYSTÈME (CRITIQUE) ---
+# On désactive systemd-resolved pour libérer le port 53 pour Dnsmasq
+- name: Désactiver systemd-resolved (conflit port 53)
+  ansible.builtin.service:
+    name: systemd-resolved
+    state: stopped
+    enabled: no
+  ignore_errors: yes
+
+- name: Remplacer resolv.conf par localhost
+  ansible.builtin.copy:
+    dest: /etc/resolv.conf
+    content: "nameserver 127.0.0.1"
+    mode: '0644'
+
+# --- 2. CONFIGURATION DNSMASQ PRINCIPALE ---
+# On configure dnsmasq pour écouter sur l'IP LAN du serveur (celle accessible par le VPN naté)
+- name: Configurer Dnsmasq principal (Interfaces & Upstream)
+  ansible.builtin.copy:
+    dest: /etc/dnsmasq.conf
+    content: |
+      # Écouter sur l'interface physique (détectée par Ansible) et localhost
+      interface={{ ansible_default_ipv4.interface }}
+      interface=lo
+      bind-interfaces
+      
+      # Options standard
+      domain-needed
+      bogus-priv
+      no-resolv
+      no-hosts
+      expand-hosts
+      
+      # Serveurs DNS Upstream (Internet)
+      server=1.1.1.1
+      server=8.8.8.8
+      
+      # Inclure les configs dynamiques (Kubernetes)
+      conf-dir=/etc/dnsmasq.d/,*.conf
+  notify: Restart Dnsmasq
+
+# --- 3. RÉCUPÉRATION DONNÉES KUBERNETES ---
 - name: Récupérer tous les services Kubernetes (JSON)
   ansible.builtin.command: k3s kubectl get services --all-namespaces -o json
   register: k8s_services_raw
@@ -21,17 +63,35 @@
   ansible.builtin.set_fact:
     traefik_lb: "{{ lb_services | selectattr('name', 'search', 'traefik') | first | default(None) }}"
 
-- name: Configurer Dnsmasq (Dynamique)
+# --- 4. CONFIGURATION DYNAMIQUE ---
+- name: Configurer Dnsmasq (Zones Kubernetes)
   ansible.builtin.template:
     src: dnsmasq-k8s.conf.j2
     dest: /etc/dnsmasq.d/99-k8s-dynamic.conf
     mode: '0644'
   notify: Restart Dnsmasq
 
-- name: Configurer Dnsmasq principal (Interfaces)
-  ansible.builtin.lineinfile:
-    path: /etc/dnsmasq.conf
-    regexp: '^interface='
-    line: 'interface=wg0,lo'
-    state: present
-  notify: Restart Dnsmasq
+# --- 5. SÉCURITÉ / PARE-FEU (AJOUTÉ) ---
+- name: "UFW: Autoriser DNS UDP depuis le réseau local (et VPN via NAT)"
+  community.general.ufw:
+    rule: allow
+    port: '53'
+    proto: udp
+    # On autorise tout le sous-réseau. Grâce au NAT sur l'hyperviseur, 
+    # le VPN arrive avec l'IP 192.168.100.1, donc il est autorisé ici.
+    from_ip: "{{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.netmask }}"
+    comment: "DNS Access from LAN and VPN"
+
+- name: "UFW: Autoriser DNS TCP"
+  community.general.ufw:
+    rule: allow
+    port: '53'
+    proto: tcp
+    from_ip: "{{ ansible_default_ipv4.network }}/{{ ansible_default_ipv4.netmask }}"
+    comment: "DNS Access from LAN and VPN"
+
+- name: Démarrer Dnsmasq
+  ansible.builtin.service:
+    name: dnsmasq
+    state: started
+    enabled: yes

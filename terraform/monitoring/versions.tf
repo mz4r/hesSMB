@@ -14,7 +14,7 @@ terraform {
 provider "argocd" {
   server_addr = "argocd.mz4.re:443"
   username    = "admin"
-  password    = "3LfgTXnW4lK13jtN"
+  password    = "mt1ugSTM1zH8VY3I"
   insecure    = true
 }
 

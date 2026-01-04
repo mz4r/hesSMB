@@ -23,7 +23,7 @@ variable "cpu" {
 
 variable "disk_size" {
   type    = string
-  default = "40000"
+  default = "60000"
 }
 
 variable "headless" {
@@ -139,6 +139,6 @@ build {
     extra_arguments = [
       "--scp-extra-args", "'-O'"
     ]
-    playbook_file = "./playbooks/playbook_hardening_lockdown.yml"
+    playbook_file = "../playbooks/hardening.yml"
   }
 }

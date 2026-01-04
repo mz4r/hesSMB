@@ -73,9 +73,12 @@
   register: admin_token
   changed_when: false
 
-- name: Afficher le token d'accès admin
-  ansible.builtin.debug:
-    msg:
-      - "Token Dashboard : {{ admin_token.stdout }}"
-
+- name: Sauvegarder le token dans /root/dashboard_token
+  become: yes
+  ansible.builtin.copy:
+    content: "{{ admin_token.stdout }}"
+    dest: "/root/dashboard_token"
+    mode: '0600'
+    owner: root
+    group: root
 
