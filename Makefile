@@ -35,7 +35,6 @@ cluster:
 	ansible-playbook -i ./inventories/inventory.yaml ansible/dns.yml -e "ansible_user=root"
 	ansible-playbook -i ./inventories/inventory.yaml ansible/networkpolicies.yml -e "ansible_user=root"
 
-
 argocd:
 	terraform -chdir=terraform/argocd init
 	terraform -chdir=terraform/argocd apply -auto-approve 
@@ -53,33 +52,8 @@ services: monitoring kserve
 hardening:
 	ansible-playbook -i ./inventories/inventory.yaml ansible/hardening.yml -e "ansible_user=root"
 
-
 networkpolicies:
 	ansible-playbook -i ./inventories/inventory.yaml ansible/networkpolicies.yml -e "ansible_user=root"
 
 dns:
 	ansible-playbook -i ./inventories/inventory.yaml ansible/dns.yml -e "ansible_user=root"
-
-vm-stop:
-	virsh destroy node1
-	virsh destroy node2
-	virsh destroy node3
-
-
-vm-start:
-	virsh start node1
-	virsh start node2
-	virsh start node3
-
-rm-deploy:
-	virsh net-destroy smb-net
-	virsh net-undefine smb-net
-	virsh destroy node1
-	virsh destroy node2
-	virsh destroy node3
-	virsh undefine node1 --remove-all-storage
-	virsh undefine node2 --remove-all-storage
-	virsh undefine node3 --remove-all-storage
-	rm -fr /var/lib/libvirt/images/node*
-
-all: deploy cluster argocd dns
