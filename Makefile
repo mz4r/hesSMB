@@ -15,8 +15,6 @@ init:
 	ansible-galaxy collection install community.libvirt
 	ansible-galaxy collection install community.general
 	echo "Install qemu/libvirt aussi"
-	cd packer
-	packer init .
 
 download-iso:
 	wget https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-13.2.0-amd64-netinst.iso
@@ -28,14 +26,14 @@ build:
 	packer build -var "iso_path=file://${PWD}/packer/iso/debian-13.2.0-amd64-netinst.iso" -var "ssh_pub_key_path=file://${PWD}/keys/id_rsa.pub" debian13.pkr.hcl
 
 deploy:
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/deploy-vm.yml 
-	sleep 60
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/hardening.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/wireguard.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
+	ansible-playbook -i ./inventories/inventory.yaml ansible/deploy-vm.yml 
+	ansible-playbook -i ./inventories/inventory.yaml ansible/hardening.yml -e "ansible_user=root"
+	ansible-playbook -i ./inventories/inventory.yaml ansible/wireguard.yml -e "ansible_user=root"
 
 cluster:
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/cluster.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/dns.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
+	ansible-playbook -i ./inventories/inventory.yaml ansible/cluster.yml -e "ansible_user=root"
+	ansible-playbook -i ./inventories/inventory.yaml ansible/dns.yml -e "ansible_user=root"
+	ansible-playbook -i ./inventories/inventory.yaml ansible/networkpolicies.yml -e "ansible_user=root"
 
 
 argocd:
@@ -50,13 +48,17 @@ kserve:
 	terraform -chdir=terraform/kserve init
 	terraform -chdir=terraform/kserve apply -auto-approve
 
+services: monitoring kserve
 
 hardening:
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/hardening.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
+	ansible-playbook -i ./inventories/inventory.yaml ansible/hardening.yml -e "ansible_user=root"
 
+
+networkpolicies:
+	ansible-playbook -i ./inventories/inventory.yaml ansible/networkpolicies.yml -e "ansible_user=root"
 
 dns:
-	ansible-playbook -i ./inventories/inventory.yaml playbooks/dns.yml -e "ansible_user=root" -e "ansible_password=mizcorp"
+	ansible-playbook -i ./inventories/inventory.yaml ansible/dns.yml -e "ansible_user=root"
 
 vm-stop:
 	virsh destroy node1

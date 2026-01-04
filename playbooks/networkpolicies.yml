@@ -1,0 +1,120 @@
+---
+- name: SÉCURITÉ - Mise en place des NetworkPolicies (Style Longhorn)
+  hosts: k3s_control_plane[0]
+  gather_facts: false
+  become: yes
+
+  vars:
+    ingress_namespace: "kube-system"
+    monitoring_namespace: "monitoring"
+    teleport_namespace: "teleport"
+    kserve_namespace: "kserve-inference"
+    
+    protected_namespaces:
+      - "argocd"
+      - "lldap"
+      - "longhorn-system"
+
+  tasks:
+    - name: Vérifier que kubectl est disponible
+      ansible.builtin.command: k3s kubectl version --client
+      changed_when: false
+      register: kubectl_check
+
+    - name: Étiqueter le namespace Ingress (Traefik)
+      ansible.builtin.command: |
+        k3s kubectl label namespace {{ ingress_namespace }} tenant=ingress --overwrite
+      register: label_ingress
+      changed_when: "'labeled' in label_ingress.stdout"
+
+    - name: Étiqueter le namespace Monitoring
+      ansible.builtin.command: |
+        k3s kubectl label namespace {{ monitoring_namespace }} tenant=monitoring --overwrite
+      register: label_monitoring
+      changed_when: "'labeled' in label_monitoring.stdout"
+
+    - name: Étiqueter le namespace Teleport comme Interne (Zone de confiance)
+      ansible.builtin.command: |
+        k3s kubectl label namespace {{ teleport_namespace }} tenant=internal --overwrite
+      register: label_teleport
+      changed_when: "'labeled' in label_teleport.stdout"
+
+    - name: Étiqueter les namespaces protégés comme Internes
+      ansible.builtin.command: |
+        k3s kubectl label namespace {{ item }} tenant=internal --overwrite
+      loop: "{{ protected_namespaces }}"
+      register: label_protected
+      changed_when: "'labeled' in label_protected.stdout"
+
+    - name: Créer le fichier manifest pour la politique "Interne Uniquement"
+      ansible.builtin.copy:
+        dest: "/tmp/np-internal-shield.yaml"
+        mode: '0644'
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: allow-internal-only
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress]
+            ingress:
+              - from:
+                - namespaceSelector:
+                    matchLabels:
+                      tenant: internal
+
+    - name: Créer le fichier manifest pour la politique "KServe Public"
+      ansible.builtin.copy:
+        dest: "/tmp/np-kserve-public.yaml"
+        mode: '0644'
+        content: |
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: allow-public-inference
+            namespace: {{ kserve_namespace }}
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress]
+            ingress:
+              - from:
+                - namespaceSelector:
+                    matchLabels:
+                      tenant: ingress
+              - from:
+                - namespaceSelector:
+                    matchLabels:
+                      tenant: monitoring
+              - from:
+                - namespaceSelector:
+                    matchLabels:
+                      tenant: internal
+
+    - name: Appliquer la politique "Interne Uniquement" aux namespaces protégés
+      ansible.builtin.command: k3s kubectl apply -f /tmp/np-internal-shield.yaml -n {{ item }}
+      loop: "{{ protected_namespaces }}"
+      register: apply_internal_policy
+      changed_when: "'created' in apply_internal_policy.stdout or 'configured' in apply_internal_policy.stdout"
+
+    - name: Appliquer la politique "KServe Public"
+      ansible.builtin.command: k3s kubectl apply -f /tmp/np-kserve-public.yaml
+      register: apply_kserve_policy
+      changed_when: "'created' in apply_kserve_policy.stdout or 'configured' in apply_kserve_policy.stdout"
+
+    - name: Vérifier la présence des NetworkPolicies
+      ansible.builtin.command: k3s kubectl get networkpolicies -A
+      register: np_status
+      changed_when: false
+
+    - name: Afficher le résumé des NetworkPolicies
+      ansible.builtin.debug:
+        var: np_status.stdout_lines
+
+    - name: Nettoyer les fichiers temporaires
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/np-internal-shield.yaml
+        - /tmp/np-kserve-public.yaml

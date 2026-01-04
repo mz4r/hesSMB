@@ -80,15 +80,12 @@
         creates: "{{ vm_images_dir }}/{{ item.name }}/{{ item.name }}.qcow2"
 
 
-# 1. On récupère les infos du disque avec l'option -U (Force Share)
-    # Cela permet de lire les infos même si la VM utilise le disque
     - name: "CHECK: Récupérer la taille actuelle des disques"
       command: "qemu-img info -U --output=json {{ vm_images_dir }}/{{ item.name }}/{{ item.name }}.qcow2"
       register: current_disk_info
       changed_when: false
       loop: "{{ vms }}"
 
-    # 2. On applique le redimensionnement UNIQUEMENT si nécessaire
     - name: Appliquer le redimensionnement du disque
       shell: |
         # On vérifie si la VM tourne (state 'running') via virsh
@@ -156,4 +153,62 @@
         state: running
       loop: "{{ vms }}"
 
+    - name: Pause de 60 secondes avant redimensionnement des disques des VMS
+      ansible.builtin.pause:
+        seconds: 60
+
     
+
+- name: Dimenssionnement des disques de VMs
+  gather_facts: yes
+  become: true
+  hosts: vms
+  tasks:
+    - name: "FIX DISK: Installer les outils nécessaires (parted & growpart)"
+      become: yes
+      ansible.builtin.package:
+        name:
+          - parted
+          - cloud-guest-utils
+        state: present
+        update_cache: yes
+
+    - name: "FIX DISK: Vérifier les partitions existantes"
+      become: yes
+      shell: "lsblk -ln -o NAME /dev/vda"
+      register: disk_partitions
+      changed_when: false
+
+    - name: "FIX DISK: Désactiver le SWAP (si présent)"
+      become: yes
+      command: swapoff -a
+      when: "'vda5' in disk_partitions.stdout"
+      ignore_errors: yes
+
+    - name: "FIX DISK: Supprimer la partition logique vda5 (si elle existe)"
+      become: yes
+      command: parted /dev/vda rm 5
+      when: "'vda5' in disk_partitions.stdout"
+
+    - name: "FIX DISK: Supprimer la partition étendue vda2 (si elle existe)"
+      become: yes
+      command: parted /dev/vda rm 2
+      when: "'vda2' in disk_partitions.stdout"
+
+    - name: "FIX DISK: Agrandir la partition racine (vda1)"
+      become: yes
+      command: "growpart /dev/vda 1"
+      register: grow_root
+      failed_when: grow_root.rc != 0 and grow_root.rc != 1
+      changed_when: grow_root.rc == 0
+
+    - name: "FIX DISK: Étendre le système de fichiers (ext4)"
+      become: yes
+      command: "resize2fs /dev/vda1"
+      when: grow_root.rc == 0 or grow_root.rc == 1
+      register: resize_fs
+      changed_when: "'The filesystem on' in resize_fs.stdout"
+
+    - name: Confirmation
+      debug:
+        msg: "Opération terminée. Disque étendu."

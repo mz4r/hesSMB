@@ -71,7 +71,7 @@ resource "argocd_application" "kserve_controller" {
           kserve = {
             controller = {
               deploymentMode = "RawDeployment"
-              replicas       = 1
+              replicas       = 2
               resources      = { requests = { cpu = "100m", memory = "256Mi" }, limits = { cpu = "500m", memory = "1Gi" } }
               gateway = {
                 domain = "kserve.mz4.re"
@@ -199,36 +199,32 @@ spec:
     model:
       modelFormat:
         name: huggingface
-      # On utilise Qwen 1.5 version 0.5 Milliards de paramètres
       args:
         - --model_name=Qwen/Qwen1.5-0.5B-Chat
         - --task=text-generation
       resources:
         requests:
-          cpu: "500m"     # Demande un demi-coeur
-          memory: "800Mi" # Demande moins de 1Go de RAM !
+          cpu: "500m"
+          memory: "800Mi"
         limits:
           cpu: "2000m"
-          memory: "2Gi"   # Plafond de sécurité
+          memory: "2Gi"
 EOF
   filename = "${path.module}/qwen-mini.yaml"
 }
 
-# Étape B : Application via kubectl
 resource "null_resource" "apply_qwen" {
   triggers = {
     manifest_sha1 = sha1(local_file.qwen_yaml.content)
   }
 
   provisioner "local-exec" {
-    # Vérifiez toujours le chemin de votre kubeconfig
     command = "kubectl apply -f ${local_file.qwen_yaml.filename} --kubeconfig ../../kubeconfig_cluster"
   }
 
   depends_on = [argocd_application.kserve_controller]
 }
 
-# Étape C : La Route Traefik pour Qwen
 resource "kubernetes_manifest" "qwen_route" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"

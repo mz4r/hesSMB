@@ -207,5 +207,4 @@
           - "{{ k8s_ingressroute_raw.stdout | from_json | json_query(ingressroute_query) }}"
           - "---------------------------------------------------"
       vars:
-        # Cette requête extrait le Namespace, le Nom de la route et la règle de matching (Host, Path, etc.)
         ingressroute_query: "items[*].{Namespace: metadata.namespace, Name: metadata.name, MatchRules: spec.routes[*].match}"

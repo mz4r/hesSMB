@@ -3,7 +3,7 @@
   hosts: wireguard
   become: true
   pre_tasks:
-    - name: Activer l'IP Forwarding (Indispensable pour le VPN)
+    - name: Activer l'IP Forwarding
       ansible.posix.sysctl:
         name: net.ipv4.ip_forward
         value: '1'

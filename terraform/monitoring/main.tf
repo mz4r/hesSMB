@@ -24,9 +24,6 @@ resource "kubernetes_manifest" "grafana_cert" {
   }
 }
 
-# ==============================================================================
-# 3. APP : KUBE PROMETHEUS STACK (ArgoCD)
-# ==============================================================================
 resource "argocd_application" "monitoring" {
   metadata {
     name      = "monitoring-stack"
@@ -42,14 +39,7 @@ resource "argocd_application" "monitoring" {
       target_revision = "68.3.0" # Version demandée
 
       helm {
-        # On charge vos valeurs personnalisées
         values = file("${path.module}/values/monitoring-values.yaml")
-        
-        # Optionnel : Forcer le mot de passe admin via Terraform si besoin
-        # parameter {
-        #   name  = "grafana.adminPassword"
-        #   value = "VotreMotDePasse"
-        # }
       }
     }
 
@@ -63,7 +53,6 @@ resource "argocd_application" "monitoring" {
         prune     = true
         self_heal = true
       }
-      # Crée le namespace s'il n'existe pas (redondance de sécurité)
       sync_options = ["CreateNamespace=true", "ServerSideApply=true"] 
     }
   }
@@ -71,18 +60,12 @@ resource "argocd_application" "monitoring" {
   depends_on = [kubernetes_manifest.grafana_cert]
 }
 
-# ==============================================================================
-# 4. NAMESPACE LOKI
-# ==============================================================================
 resource "kubernetes_namespace" "loki" {
   metadata {
     name = "loki"
   }
 }
 
-# ==============================================================================
-# 5. APP : LOKI (ArgoCD)
-# ==============================================================================
 resource "argocd_application" "loki" {
   metadata {
     name      = "loki"
@@ -117,10 +100,6 @@ resource "argocd_application" "loki" {
   }
 }
 
-# ==============================================================================
-# 6. ROUTE TRAEFIK (Pour exposer Grafana)
-# ==============================================================================
-# Ajoutez ceci si votre fichier values.yaml ne configure pas l'Ingress automatiquement
 resource "kubernetes_manifest" "grafana_route" {
   manifest = {
     apiVersion = "traefik.io/v1alpha1"
