@@ -1,4 +1,4 @@
-# Projet SMB111
+# Projet SMB112
 
 ## Prérequis
 
@@ -166,3 +166,4 @@ Pour des raisons de ressources matérielles, nous avons choisi de ne pas déploy
 * **Modèle Qwen (HuggingFace)** :
 * Domaine : `https://qwen.kserve.mz4.re`
 * Endpoint (V2) : `POST /v2/models/qwen-mini/infer`
+
