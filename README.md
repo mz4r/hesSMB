@@ -1,168 +1,168 @@
 # Projet SMB111
 
-# Prérequis
-Installation des packages suivants : 
-```
-terraform # Déploiement d'argocd et les services géré par argocd
-packer # Pour construire l'image template des VMs
-ansible # Pour executer les playbook pour le deploiment automatisé
-kubectl # Communication avec le cluster kubernetes en utilisant le fichier de configuration kubeconfig_cluster
-tsh #Teleport client pour accès au service SOC
-```
+## Prérequis
 
-Il faut également mettre en place libvirt/qemu sur l'host avec les librairie nécessaire à packer pour le build de l'image template:
-```
+L'installation des paquets suivants est nécessaire :
+
+* **Terraform** : Déploiement d'ArgoCD et des services gérés par celui-ci.
+* **Packer** : Construction de l'image template des machines virtuelles (VM).
+* **Ansible** : Exécution des playbooks pour le déploiement automatisé.
+* **Kubectl** : Communication avec le cluster Kubernetes via le fichier `kubeconfig_cluster`.
+* **Tsh** : Client Teleport pour l'accès sécurisé au service SOC.
+
+### Configuration de l'hôte
+
+Il est nécessaire de configurer **libvirt/QEMU** sur l'hôte, ainsi que les bibliothèques requises par Packer pour le build :
+
+```bash
 sudo modprobe iptable_filter
 sudo modprobe ipt_tcp
 sudo modprobe br_netfilter
 sudo modprobe bridge
+
 ```
 
-Pour ansible les collection nécessaire sont à mettre en place (un requirements galaxy est disponible dans ./ansible installable avec : ansible-galaxy collection install -r requirements.yml)
-```
+### Collections Ansible
+
+Les collections nécessaires se trouvent dans le fichier `requirements.yml` du dossier `./ansible`. Vous pouvez les installer avec la commande suivante :
+`ansible-galaxy collection install -r requirements.yml`
+
+Sinon, installez-les manuellement :
+
+```bash
 ansible-galaxy collection install community.libvirt
 ansible-galaxy collection install community.general
+
 ```
 
-# Processus de deploiment
-```
-[X] Deploiement des VMs : Packer
-    [X] Construction image
-    [X] Deploiment de 3 VMs via Ansible
-[X] Hardening Ansible sur les 3 VMs
-[X] Cluster K3S Ansible
-   [X] Déploiment de 3 noeuds K3S
-   [X] Composant sécurité du cluster K3S
-        [X] Metallb
-        [X] Cert-Manager
-        [X] ArgoCD / Keel
-        [X] Traefik
-        [X] Kubernetes Dashboard
-        [X] Longhorn
-        [X] LLDAP
-        [X] Teleport
+---
 
-[X] Wireguard sur un node + DNSMasq pour resolution interne
+## Processus de déploiement
 
-[X] Deploiment via ArgoCD
-    [X] KServe
-        [X] Inference SKLearn-iris
-        [X] Qwen 
-    [X] Monitoring/Supervision
-        [X] Prometheus
-        [X] Grafana
-        [X] Loki
-        [X] AlertManager
-        [X] NodeExporter
-```
+Le projet suit les étapes de validation suivantes :
 
-Voici les différentes étapes pour le déploiement complet :
+* [x] **Déploiement des VM (Packer & Ansible)**
+* [x] Construction de l'image
+* [x] Déploiement de 3 VM via Ansible
 
-**1. Construction de l'image template**
-On construit l'image template Debian 13 avec un hardening (renforcement) `debian13-cis`.
+
+* [x] **Hardening (Durcissement)** : Application des politiques de sécurité Ansible sur les 3 VM.
+* [x] **Cluster K3S (Ansible)**
+* [x] Déploiement de 3 nœuds K3S
+* [x] Composants de sécurité et infrastructure : MetalLB, Cert-Manager, ArgoCD, Keel, Traefik, Kubernetes Dashboard, Longhorn, LLDAP, Teleport.
+
+
+* [x] **Réseau** : WireGuard sur un nœud + DNSMasq pour la résolution interne.
+* [x] **Déploiement via ArgoCD**
+* [x] **KServe** : Inférence SKLearn-iris, Qwen.
+* [x] **Observabilité** : Prometheus, Grafana, Loki, AlertManager, NodeExporter.
+
+
+
+---
+
+## Étapes détaillées du déploiement
+
+### 1. Construction de l'image template
+
+Nous construisons une image template **Debian 13** en appliquant un durcissement (hardening) de type `debian13-cis`.
 
 ```bash
 make build
 
 ```
 
-À la fin du build, une image qcow2 est créée : `./packer/debian13.qcow2/packer-debian13`.
+À l'issue du build, une image QCOW2 est générée : `./packer/debian13.qcow2/packer-debian13`.
+**Note :** Veillez à déplacer cette image vers `/var/lib/libvirt/images/base-images/debian13-hardening-cis.qcow2` ou à modifier l'inventaire Ansible. Assurez-vous que les permissions permettent à `libvirt` d'y accéder.
 
-Il faut la placer au bon endroit ou modifier l'inventory Ansible pour indiquer le chemin de l'image (les droits doivent être corrects pour que libvirt puisse y accéder) : `/var/lib/libvirt/images/base-images/debian13-hardening-cis.qcow2`.
+### 2. Déploiement des VM et du réseau
 
-**2. Déploiement des VM et du réseau**
-On déploie les VM et le réseau `smb-net` sur notre hyperviseur avec :
+Déployez les VM et le réseau `smb-net` sur l'hyperviseur :
 
 ```bash
 make deploy
 
 ```
 
-Cela lance les playbooks qui déploient le réseau et les VMs, puis redimensionnent les disques des VMs selon nos besoins. Ensuite, le playbook de hardening et le playbook WireGuard (pour l'accès VPN) sont relancés.
+Cette commande exécute les playbooks qui :
 
-On peut ensuite récupérer sur l'hyperviseur le fichier de configuration client WireGuard pour la connexion VPN, situé dans `/root/wireguard-keys/admin.conf`.
+1. Déploient le réseau et les VM.
+2. Redimensionnent les disques selon les besoins.
+3. Appliquent le hardening et configurent WireGuard pour l'accès VPN.
 
-**3. Déploiement du cluster Kubernetes**
-On déploie le cluster Kubernetes et ses composants principaux :
+Le fichier de configuration client WireGuard est disponible sur l'hyperviseur à l'emplacement : `/root/wireguard-keys/admin.conf`.
+
+### 3. Déploiement du cluster Kubernetes
+
+Pour installer le cluster et ses composants socles :
 
 ```bash
 make cluster
 
 ```
 
-Cela met en place le cluster défini dans l'inventory puis déploie les composants suivants :
+Cette étape configure le cluster et déploie automatiquement : MetalLB, Traefik, Cert-manager, Longhorn, Kube Dashboard, LLDAP et Teleport. Elle lance aussi le playbook **SmartDNS** qui configure `DNSMasq` de manière dynamique selon les Ingress Traefik.
 
-* MetalLB
-* Traefik
-* Cert-manager
-* Longhorn
-* Kube Dashboard
-* LLDAP
-* Teleport
+### 4. Déploiement d'ArgoCD
 
-Cela exécute également le playbook SmartDNS qui configure un serveur DNSMasq avec une configuration dynamique basée sur les Ingress gérés par Traefik.
-
-**4. Déploiement d'ArgoCD**
-On déploie ArgoCD pour la gestion des autres services :
+Installez ArgoCD pour la gestion continue (GitOps) des services :
 
 ```bash
 make argocd
+
 ```
 
-**5. Configuration des secrets et services**
-On récupère le mot de passe admin ArgoCD généré automatiquement dans les secrets du namespace `argocd`, puis on modifie le mot de passe dans les fichiers de version Terraform : `./terraform/kserve` et `./terraform/monitoring`.
+### 5. Configuration des secrets et services
 
-Une fois cela fait, on peut exécuter :
+1. Récupérez le mot de passe administrateur ArgoCD dans les secrets du namespace `argocd`.
+2. Reportez ce mot de passe dans les fichiers Terraform : `./terraform/kserve` et `./terraform/monitoring`.
+3. Déployez les services finaux :
 
 ```bash
 make services
+
 ```
 
-Cela déploiera via Terraform les services sur ArgoCD pour le monitoring et KServe.
+Enfin, appliquez l'isolation réseau pour sécuriser les services sensibles :
 
-On peut ensuite terminer par le deploiment des network policies pour appliquer l'isolation des services sensible : 
 ```bash
 make networkpolicies
+
 ```
 
-# Architecture
-L'objectif est de mettre en place un cluster kubernetes sur 3 VM de façon automatisé pour exposé tout les services du cycle de vie d'un model (LLM). 
-Malheuresement pour une question de ressource principalement, nous n'avons pas pu mettre en place tout les composants de Kubeflow. Nous avons donc mis en place le composants final de la chaine Kserve.
+---
 
-Kserve permet d'exposer les models pour leurs utilisation simple avec des call api par exemple.
+## Architecture
 
-![alt text](./assets/img/ai-lifecycle-dev-prod.drawio.svg)
-![alt text](./assets/img/ai-lifecycle-kubeflow.drawio.svg)
+L'objectif est d'automatiser la mise en place d'un cluster Kubernetes sur 3 VM afin d'exposer l'ensemble des services liés au cycle de vie d'un modèle d'Intelligence Artificielle (LLM).
 
-## Objectifs 
-- Configuration hardening de 3 VM
-- Mise en place automatisé d'un cluster k8s avec 1 node sur chaque VM
-- Mise en place automatisé des composants principaux du cluster utile pour les différents services
-- Deploiment des services via argocd  
+Pour des raisons de ressources matérielles, nous avons choisi de ne pas déployer l'intégralité de la suite Kubeflow, mais de nous concentrer sur **KServe**, le composant final de la chaîne. KServe permet d'exposer les modèles via des API standardisées.
 
-# Urls :
+### Objectifs atteints
 
-https://auth.mz4.re/
+* Configuration et durcissement (hardening) de 3 VM.
+* Mise en place automatisée d'un cluster K8s (1 nœud par VM).
+* Déploiement automatisé des composants d'infrastructure.
+* Gestion des services applicatifs via ArgoCD.
 
-https://argocd.mz4.re/
+---
 
-https://keel.mz4.re/
+## Accès et URLs
 
-https://grafana.mz4.re/
+| Service | URL |
+| --- | --- |
+| **Authentification** | [https://auth.mz4.re/](https://auth.mz4.re/) |
+| **ArgoCD** | [https://argocd.mz4.re/](https://argocd.mz4.re/) |
+| **Grafana** | [https://grafana.mz4.re/](https://grafana.mz4.re/) |
+| **Teleport** | [https://teleport.mz4.re/](https://teleport.mz4.re/) |
 
-https://teleport.mz4.re/
+### KSERVE (Inférence)
+
+* **Modèle Iris (Sklearn)** :
+* Domaine : `https://iris.kserve.mz4.re`
+* Endpoint (V1) : `POST /v1/models/sklearn-iris:predict`
 
 
-KSERVE => 
-
-Modèle Iris (Sklearn) :
-
-    Domaine : https://iris.kserve.mz4.re
-
-    Endpoint de prédiction (V1) : POST https://iris.kserve.mz4.re/v1/models/sklearn-iris:predict
-
-Modèle Qwen (HuggingFace) :
-
-    Domaine : https://qwen.kserve.mz4.re
-
-    Endpoint de prédiction (V2 standard pour LLM/Triton) : POST https://qwen.kserve.mz4.re/v2/models/qwen-mini/infer
+* **Modèle Qwen (HuggingFace)** :
+* Domaine : `https://qwen.kserve.mz4.re`
+* Endpoint (V2) : `POST /v2/models/qwen-mini/infer`
